@@ -33,6 +33,8 @@ The Deskband11 technique:
 
 **Vertical inset**: 4 * scale pixels on top and bottom so the indicator doesn't fill the full taskbar height.
 
+**Resilience to DPI/display changes**: The main HWND is subclassed to catch `WM_DPICHANGED`, `WM_DISPLAYCHANGE`, and the registered `TaskbarCreated` shell message. On DPI/display changes, the window repositions within its current parent. On `TaskbarCreated` (explorer recreated the taskbar), it re-parents entirely. Positioning logic is split: `MoveToTaskbar()` handles initial parenting + position, `RepositionInTaskbar()` just recalculates position and verifies the parent is still valid.
+
 ### Transparency
 
 - `SetLayeredWindowAttributes` does NOT work with WinUI 3 (it uses DirectComposition, not GDI)

@@ -68,6 +68,12 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll")]
     internal static partial int GetSystemMetrics(int nIndex);
 
+    [LibraryImport("user32.dll")]
+    internal static partial nint GetParent(nint hWnd);
+
+    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial uint RegisterWindowMessageW(string lpString);
+
     [LibraryImport("kernel32.dll")]
     internal static partial nint GetModuleHandleW(nint lpModuleName);
 
@@ -166,6 +172,8 @@ internal static partial class NativeMethods
     // Message constants
     internal const uint WM_MEASUREITEM = 0x002C;
     internal const uint WM_DRAWITEM = 0x002B;
+    internal const uint WM_DPICHANGED = 0x02E0;
+    internal const uint WM_DISPLAYCHANGE = 0x007E;
 
     // Drawing constants
     internal const uint ODS_SELECTED = 0x0001;

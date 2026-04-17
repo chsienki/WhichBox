@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -14,6 +15,10 @@ public sealed partial class MainWindow : Window
     private readonly string _machineName = Environment.MachineName;
     private readonly Settings _settings;
     private readonly NativeContextMenu _contextMenu;
+    private readonly uint _taskbarCreatedMsg;
+    private nint _prevWndProc;
+    private WndProcDelegate? _wndProcDelegate; // prevent GC
+    private bool _parentedToTaskbar;
 
     public MainWindow()
     {
@@ -23,6 +28,16 @@ public sealed partial class MainWindow : Window
         _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(_hwnd));
         _settings = Settings.Load();
         _contextMenu = new NativeContextMenu();
+
+        // Register for the shell's TaskbarCreated message, broadcast when
+        // explorer.exe recreates the taskbar (e.g., after a crash or DPI change).
+        _taskbarCreatedMsg = RegisterWindowMessageW("TaskbarCreated");
+
+        // Subclass our HWND to catch WM_DPICHANGED, WM_DISPLAYCHANGE,
+        // and the TaskbarCreated shell message so we can reposition/re-parent.
+        _wndProcDelegate = WndProc;
+        _prevWndProc = SetWindowLongPtrW(_hwnd, GWLP_WNDPROC,
+            Marshal.GetFunctionPointerForDelegate(_wndProcDelegate));
 
         // Hide title bar
         _appWindow.TitleBar.ExtendsContentIntoTitleBar = true;
@@ -60,6 +75,24 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) => _contextMenu.Destroy();
     }
 
+    private nint WndProc(nint hWnd, uint msg, nint wParam, nint lParam)
+    {
+        if (msg == WM_DPICHANGED || msg == WM_DISPLAYCHANGE)
+        {
+            // DPI or display configuration changed (e.g., RDP -> physical console).
+            // Defer repositioning so the taskbar has time to finish resizing.
+            DispatcherQueue.TryEnqueue(() => RepositionInTaskbar());
+        }
+        else if (_taskbarCreatedMsg != 0 && msg == _taskbarCreatedMsg)
+        {
+            // Explorer recreated the taskbar -- need to re-parent entirely.
+            _parentedToTaskbar = false;
+            DispatcherQueue.TryEnqueue(() => MoveToTaskbar());
+        }
+
+        return CallWindowProcW(_prevWndProc, hWnd, msg, wParam, lParam);
+    }
+
     /// <summary>
     /// Parents this window to the taskbar, using the Deskband11 technique:
     /// change style to WS_CHILD, SetParent onto Shell_TrayWnd, position
@@ -70,14 +103,46 @@ public sealed partial class MainWindow : Window
         var taskbar = FindWindowW("Shell_TrayWnd", null);
         if (taskbar == 0) return;
 
-        // Change style: remove WS_POPUP and all chrome bits, add WS_CHILD
-        var style = GetWindowLongW(_hwnd, GWL_STYLE);
-        style = (style & ~(WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) | WS_CHILD;
-        SetWindowLongW(_hwnd, GWL_STYLE, style);
+        if (!_parentedToTaskbar)
+        {
+            // Change style: remove WS_POPUP and all chrome bits, add WS_CHILD
+            var style = GetWindowLongW(_hwnd, GWL_STYLE);
+            style = (style & ~(WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) | WS_CHILD;
+            SetWindowLongW(_hwnd, GWL_STYLE, style);
 
-        // Parent to the taskbar
-        SetParent(_hwnd, taskbar);
+            SetParent(_hwnd, taskbar);
+            _parentedToTaskbar = true;
+        }
 
+        PositionInTaskbar(taskbar);
+    }
+
+    /// <summary>
+    /// Repositions within the current taskbar parent. If the parent is
+    /// no longer Shell_TrayWnd (taskbar was recreated), falls back to
+    /// full MoveToTaskbar.
+    /// </summary>
+    private void RepositionInTaskbar()
+    {
+        var taskbar = FindWindowW("Shell_TrayWnd", null);
+        if (taskbar == 0) return;
+
+        // Verify we're still parented to the taskbar
+        if (GetParent(_hwnd) != taskbar)
+        {
+            _parentedToTaskbar = false;
+            MoveToTaskbar();
+            return;
+        }
+
+        PositionInTaskbar(taskbar);
+    }
+
+    /// <summary>
+    /// Calculates and applies the correct position and size within the taskbar.
+    /// </summary>
+    private void PositionInTaskbar(nint taskbar)
+    {
         // GetWindowRect returns logical (DPI-virtualized) coordinates, but after
         // SetParent the child window's SetWindowPos operates in the taskbar's
         // physical pixel coordinate space. We must scale by the DPI factor.

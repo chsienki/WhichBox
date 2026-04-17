@@ -12,12 +12,22 @@
             <Border x:Name="LabelBorder"
                     HorizontalAlignment="Stretch"
                     VerticalAlignment="Stretch">
-                <TextBlock x:Name="MachineNameText"
-                           FontSize="22"
-                           FontWeight="Bold"
-                           FontFamily="Segoe UI"
-                           VerticalAlignment="Center"
-                           HorizontalAlignment="Center" />
+                <Grid>
+                    <TextBlock x:Name="MachineNameText"
+                               FontSize="22"
+                               FontWeight="Bold"
+                               FontFamily="Segoe UI"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center" />
+                    <!-- Update indicator dot, top-right corner -->
+                    <Ellipse x:Name="UpdateDot"
+                             Width="8" Height="8"
+                             Fill="#FF4444"
+                             HorizontalAlignment="Right"
+                             VerticalAlignment="Top"
+                             Margin="0,2,3,0"
+                             Visibility="Collapsed" />
+                </Grid>
             </Border>
         </Grid>
         <!-- Composition output: SpriteVisual with opacity mask is placed here -->

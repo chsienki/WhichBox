@@ -73,6 +73,8 @@ public sealed partial class MainWindow : Window
             MoveToTaskbar();
 
             // Check for updates in the background (fire and forget)
+            _updateChecker.UpdateFound += () =>
+                DispatcherQueue.TryEnqueue(() => UpdateDot.Visibility = Visibility.Visible);
             _ = _updateChecker.CheckAsync();
         };
 
@@ -234,6 +236,9 @@ public sealed partial class MainWindow : Window
                 break;
             case MenuAction.ToggleStartup:
                 StartupHelper.SetRegistered(!StartupHelper.IsRegistered);
+                break;
+            case MenuAction.CheckForUpdates:
+                _ = _updateChecker.CheckAsync();
                 break;
             case MenuAction.Update:
                 _ = _updateChecker.DownloadAndInstallAsync();

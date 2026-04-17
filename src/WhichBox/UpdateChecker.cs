@@ -40,6 +40,11 @@ internal sealed class UpdateChecker
     public bool IsUpdateAvailable => LatestVersion is not null;
 
     /// <summary>
+    /// Raised on the calling SynchronizationContext when a new version is found.
+    /// </summary>
+    public event Action? UpdateFound;
+
+    /// <summary>
     /// Checks GitHub for a newer release. Safe to call from any thread.
     /// </summary>
     public async Task CheckAsync()
@@ -68,6 +73,7 @@ internal sealed class UpdateChecker
 
             LatestVersion = remoteVersion;
             InstallerUrl = asset.BrowserDownloadUrl;
+            UpdateFound?.Invoke();
         }
         catch
         {

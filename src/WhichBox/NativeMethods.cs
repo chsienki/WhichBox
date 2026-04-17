@@ -35,6 +35,12 @@ internal static partial class NativeMethods
     internal static partial uint GetDpiForWindow(nint hwnd);
 
     [LibraryImport("user32.dll")]
+    internal static partial nint SetThreadDpiAwarenessContext(nint dpiContext);
+
+    // DPI_AWARENESS_CONTEXT values (pseudo-handle constants)
+    internal static readonly nint DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4;
+
+    [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GetCursorPos(out POINT lpPoint);
 

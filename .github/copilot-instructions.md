@@ -27,7 +27,7 @@ The Deskband11 technique:
 2. `SetParent(hwnd, Shell_TrayWnd)`
 3. Position to the left of `TrayNotifyWnd`
 
-**DPI handling is critical**: `GetWindowRect` returns logical (DPI-virtualized) coordinates, but after `SetParent` the child's `SetWindowPos` operates in the taskbar's physical pixel space. Must multiply all coordinates by `GetDpiForWindow(taskbar) / 96.0`. The dev machine runs at 200% DPI (192 DPI).
+**DPI handling is critical**: After `SetParent`, the child window may inherit a different DPI awareness context, causing `GetWindowRect` to return logical (virtualized) coordinates on some machines but physical on others. The fix is to call `SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)` before any `GetWindowRect`/`SetWindowPos` calls in `PositionInTaskbar`, ensuring coordinates are always physical pixels. Hardcoded constants (vertical inset, per-character width estimates, gaps) must still be scaled by `GetDpiForWindow(taskbar) / 96.0` since they're defined in logical units. **Do NOT simply multiply all `GetWindowRect` results by the DPI scale factor** -- that double-scales on machines where the coords are already physical.
 
 **WinUI minimum window size**: WinUI enforces a minimum of ~129 logical pixels width. We use a two-pass sizing approach: request a small size, measure the actual clamped width, then position based on the actual width.
 
@@ -116,6 +116,6 @@ dotnet run install.cs
 3. **VisualSurface + IsVisible**: VisualSurface cannot capture from a visual with IsVisible=false. Hide the container, not the source.
 4. **AOT + XAML resources**: The .pri and .xbf files must be copied to the publish directory. The CopyXamlResourcesForAot target handles this.
 5. **Menu popup over RDP**: HWND_MESSAGE windows don't work as popup owners over RDP. Use a real (offscreen) top-level window.
-6. **DPI after SetParent**: All coordinates must be scaled by the DPI factor after reparenting to the taskbar.
+6. **DPI after SetParent**: Do NOT blindly scale `GetWindowRect` results -- the DPI awareness context varies by machine. Instead, wrap positioning code in `SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2)` so all APIs use consistent physical-pixel coordinates. Only scale hardcoded constants (insets, gaps).
 7. **WndProcDelegate GC**: Store the delegate in a field so it isn't garbage collected while the native subclass is active.
 8. **dotnet publish pipe deadlock**: Don't redirect stdout when running dotnet publish -- the progress UI fills the buffer.

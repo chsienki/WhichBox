@@ -143,15 +143,31 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void PositionInTaskbar(nint taskbar)
     {
-        // After SetParent, both GetWindowRect and SetWindowPos operate in the
-        // same coordinate space, so no DPI scaling is needed.
+        // After SetParent, the child window may inherit a different DPI awareness
+        // context, causing GetWindowRect to return logical (virtualized) coords on
+        // some machines but physical on others. Force per-monitor-v2 so
+        // GetWindowRect always returns physical pixels, matching SetWindowPos.
+        var prevContext = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        try
+        {
+            PositionInTaskbarCore(taskbar);
+        }
+        finally
+        {
+            SetThreadDpiAwarenessContext(prevContext);
+        }
+    }
+
+    private void PositionInTaskbarCore(nint taskbar)
+    {
         if (!GetWindowRect(taskbar, out var taskbarRect)) return;
         var taskbarHeight = taskbarRect.Bottom - taskbarRect.Top;
         var taskbarWidth = taskbarRect.Right - taskbarRect.Left;
 
         // Inset vertically so the window doesn't fill the full taskbar height.
-        var verticalInset = 4;
-        var estimatedWidth = _machineName.Length * 8 + 24;
+        var scale = GetDpiForWindow(taskbar) / 96.0;
+        var verticalInset = (int)(4 * scale);
+        var estimatedWidth = (int)((_machineName.Length * 8 + 24) * scale);
         var windowHeight = taskbarHeight - (verticalInset * 2);
 
         // First pass: set size and a temporary position (far left) so the
@@ -169,11 +185,11 @@ public sealed partial class MainWindow : Window
         if (trayNotify != 0 && GetWindowRect(trayNotify, out var trayRect))
         {
             var anchorLeft = trayRect.Left - taskbarRect.Left;
-            xPos = anchorLeft - actualWidth - 4;
+            xPos = anchorLeft - actualWidth - (int)(4 * scale);
         }
         else
         {
-            xPos = taskbarWidth - actualWidth - 4;
+            xPos = taskbarWidth - actualWidth - (int)(4 * scale);
         }
 
         // Second pass: position using the actual measured width.

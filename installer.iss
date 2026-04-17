@@ -27,7 +27,11 @@ OutputDir=installer-output
 CloseApplications=force
 RestartApplications=no
 UninstallDisplayName={#MyAppName}
+#if MyAppArch == "arm64"
+ArchitecturesAllowed=arm64
+#else
 ArchitecturesAllowed={#MyAppArch}compatible
+#endif
 
 [Tasks]
 Name: "runatstartup"; Description: "Run at Windows startup"; GroupDescription: "Additional options:"; Flags: checkedonce

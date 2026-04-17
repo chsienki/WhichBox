@@ -27,6 +27,8 @@ OutputDir=installer-output
 CloseApplications=force
 RestartApplications=no
 UninstallDisplayName={#MyAppName}
+SetupIconFile=src\WhichBox\app.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 #if MyAppArch == "arm64"
 ArchitecturesAllowed=arm64
 #else

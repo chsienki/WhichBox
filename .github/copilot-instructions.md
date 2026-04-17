@@ -77,6 +77,24 @@ A .NET 10 file-based application (`dotnet run install.cs`) that:
 
 **Important**: Cannot use `RedirectStandardOutput` with `dotnet publish` -- the progress UI fills the pipe buffer causing a deadlock. Use `UseShellExecute = false` without output redirection.
 
+## Project Structure
+
+```
+WhichBox/
+  WhichBox.slnx              # Solution file
+  install.cs                  # C# file-based app: build + install + startup
+  src/WhichBox/
+    Program.cs                # Custom Main (WinRT ComWrappersSupport init)
+    App.xaml(.cs)             # WinUI 3 Application boilerplate
+    MainWindow.xaml(.cs)      # Window setup, taskbar parenting, event wiring
+    NativeMethods.cs          # All Win32 P/Invoke declarations and constants
+    NativeContextMenu.cs      # Owner-drawn popup menu with color swatches
+    CompositionMaskHelper.cs  # Composition opacity mask for feathered edges
+    ColorPalette.cs           # 12 muted colors, hash-based default, contrast calc
+    Settings.cs               # JSON persistence (AOT-safe with source generators)
+    WhichBox.csproj           # Project file with AOT + XAML resource workaround
+```
+
 ## File Guide
 
 | File | Purpose |

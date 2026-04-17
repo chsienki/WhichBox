@@ -38,7 +38,7 @@ Name: "runatstartup"; Description: "Run at Windows startup"; GroupDescription: "
 Name: "launchapp"; Description: "Launch {#MyAppName} after install"; GroupDescription: "Additional options:"; Flags: checkedonce
 
 [Files]
-Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDir}\*"; Excludes: "*.pdb,Microsoft.Web.WebView2.Core.dll,WebView2Loader.dll,Microsoft.Windows.ApplicationModel.Background.UniversalBGTask.dll"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

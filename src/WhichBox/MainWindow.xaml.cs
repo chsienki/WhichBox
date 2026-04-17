@@ -143,20 +143,15 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void PositionInTaskbar(nint taskbar)
     {
-        // GetWindowRect returns logical (DPI-virtualized) coordinates, but after
-        // SetParent the child window's SetWindowPos operates in the taskbar's
-        // physical pixel coordinate space. We must scale by the DPI factor.
-        var dpi = GetDpiForWindow(taskbar);
-        var scale = dpi / 96.0;
-
+        // After SetParent, both GetWindowRect and SetWindowPos operate in the
+        // same coordinate space, so no DPI scaling is needed.
         if (!GetWindowRect(taskbar, out var taskbarRect)) return;
-        var taskbarHeight = (int)((taskbarRect.Bottom - taskbarRect.Top) * scale);
-        var taskbarWidth = (int)((taskbarRect.Right - taskbarRect.Left) * scale);
+        var taskbarHeight = taskbarRect.Bottom - taskbarRect.Top;
+        var taskbarWidth = taskbarRect.Right - taskbarRect.Left;
 
-        // Initial size estimate -- WinUI may enforce a minimum larger than this.
         // Inset vertically so the window doesn't fill the full taskbar height.
-        var verticalInset = (int)(4 * scale);
-        var estimatedWidth = (int)((_machineName.Length * 8 + 24) * scale);
+        var verticalInset = 4;
+        var estimatedWidth = _machineName.Length * 8 + 24;
         var windowHeight = taskbarHeight - (verticalInset * 2);
 
         // First pass: set size and a temporary position (far left) so the
@@ -166,19 +161,19 @@ public sealed partial class MainWindow : Window
 
         // Read the actual window width -- WinUI may have clamped it to a minimum.
         if (!GetWindowRect(_hwnd, out var actualRect)) return;
-        var actualWidth = (int)((actualRect.Right - actualRect.Left) * scale);
+        var actualWidth = actualRect.Right - actualRect.Left;
 
         // Find the anchor point: TrayNotifyWnd left edge (includes the chevron).
         var trayNotify = FindWindowExW(taskbar, 0, "TrayNotifyWnd", null);
         int xPos;
         if (trayNotify != 0 && GetWindowRect(trayNotify, out var trayRect))
         {
-            var anchorLeft = (int)((trayRect.Left - taskbarRect.Left) * scale);
-            xPos = anchorLeft - actualWidth - (int)(4 * scale);
+            var anchorLeft = trayRect.Left - taskbarRect.Left;
+            xPos = anchorLeft - actualWidth - 4;
         }
         else
         {
-            xPos = taskbarWidth - actualWidth - (int)(4 * scale);
+            xPos = taskbarWidth - actualWidth - 4;
         }
 
         // Second pass: position using the actual measured width.

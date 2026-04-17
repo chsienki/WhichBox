@@ -38,12 +38,18 @@ This builds, installs to `%LOCALAPPDATA%\WhichBox\`, registers for auto-start on
 
 ## Uninstall
 
-1. Right-click the indicator and choose **Exit**
-2. Remove the startup entry and install directory:
-   ```powershell
-   Remove-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "WhichBox"
-   Remove-Item -Recurse "$env:LOCALAPPDATA\WhichBox"
-   ```
+Run the uninstall script, or remove manually:
+
+```powershell
+# Script (kills process, removes registry entry and files)
+dotnet run uninstall.cs
+
+# Or manually:
+# 1. Right-click the indicator and choose Exit
+# 2. Remove the startup entry and install directory:
+Remove-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "WhichBox"
+Remove-Item -Recurse "$env:LOCALAPPDATA\WhichBox"
+```
 
 ## Development
 

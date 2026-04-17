@@ -1,0 +1,26 @@
+<Window
+    x:Class="WhichBox.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="WhichBox">
+
+    <Grid x:Name="Root"
+          HorizontalAlignment="Stretch"
+          VerticalAlignment="Stretch">
+        <!-- Content layer: captured by VisualSurface, container hidden from display -->
+        <Grid x:Name="ContentHost">
+            <Border x:Name="LabelBorder"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch">
+                <TextBlock x:Name="MachineNameText"
+                           FontSize="22"
+                           FontWeight="Bold"
+                           FontFamily="Segoe UI"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Center" />
+            </Border>
+        </Grid>
+        <!-- Composition output: SpriteVisual with opacity mask is placed here -->
+        <Canvas x:Name="MaskHost"/>
+    </Grid>
+</Window>

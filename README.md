@@ -1,4 +1,4 @@
-# WhichBox
+# <img src="docs/icon.png" width="32" height="32" alt="WhichBox icon"> WhichBox
 
 A small Windows taskbar indicator that displays the current machine name. Helpful when you frequently switch between VMs or remote desktops and need a quick visual cue for which machine you're on.
 

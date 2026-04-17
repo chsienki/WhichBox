@@ -8,25 +8,19 @@ A small Windows taskbar indicator that displays the current machine name. Helpfu
 
 - Sits directly in the taskbar, just left of the system tray
 - Color-coded background with 12 muted pastel colors -- each machine gets a deterministic default based on its name
-- Right-click to pick a different color or exit
+- Right-click to pick a different color, toggle startup, or exit
 - Remembers your color choice across restarts
-- Starts automatically on login
+- Automatic update checking via GitHub Releases
 - Single native executable with fast startup (NativeAOT)
-
-## Requirements
-
-- Windows 10 19041+ or Windows 11
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) (for building)
 
 ## Install
 
-```powershell
-git clone https://github.com/chsienki/WhichBox.git
-cd WhichBox
-dotnet run install.cs
-```
+Download the latest installer from [GitHub Releases](https://github.com/chsienki/WhichBox/releases):
 
-This builds, installs to `%LOCALAPPDATA%\WhichBox\`, registers for auto-start on login, and launches the app.
+- **WhichBox-x64-Setup.exe** for Intel/AMD machines
+- **WhichBox-arm64-Setup.exe** for ARM devices
+
+Run the installer -- no admin rights required. It installs to `%LOCALAPPDATA%\WhichBox` and optionally registers for auto-start on login.
 
 ## Usage
 
@@ -34,29 +28,27 @@ This builds, installs to `%LOCALAPPDATA%\WhichBox\`, registers for auto-start on
 - **Right-click** to open the context menu:
   - Pick a color from the palette
   - Reset to the default color
+  - Toggle **Run at Startup**
+  - **Update Available** (shown when a newer version is found)
   - Exit
 
 ## Uninstall
 
-Run the uninstall script, or remove manually:
+Use **Add or Remove Programs** in Windows Settings, or run the uninstaller from the Start Menu.
+
+## Building from Source
+
+Requires [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and Windows 10 19041+.
 
 ```powershell
-# Script (kills process, removes registry entry and files)
-dotnet run uninstall.cs
+git clone https://github.com/chsienki/WhichBox.git
+cd WhichBox
 
-# Or manually:
-# 1. Right-click the indicator and choose Exit
-# 2. Remove the startup entry and install directory:
-Remove-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "WhichBox"
-Remove-Item -Recurse "$env:LOCALAPPDATA\WhichBox"
-```
-
-## Development
-
-```powershell
 # Debug build
 dotnet build src\WhichBox\WhichBox.csproj -c Debug
-src\WhichBox\bin\Debug\net10.0-windows10.0.26100.0\WhichBox.exe
+
+# AOT publish
+dotnet publish src\WhichBox\WhichBox.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained -o publish
 ```
 
 ## License

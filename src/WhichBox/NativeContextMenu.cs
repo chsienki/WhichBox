@@ -39,7 +39,7 @@ internal sealed class NativeContextMenu
     /// Shows the context menu at the given screen coordinates and returns
     /// the user's selection.
     /// </summary>
-    public MenuResult Show(int x, int y)
+    public MenuResult Show(int x, int y, bool startupChecked = false, string? updateVersion = null)
     {
         var hMenu = CreatePopupMenu();
         if (hMenu == 0) return MenuResult.None;
@@ -54,9 +54,21 @@ internal sealed class NativeContextMenu
 
             AppendMenuW(hMenu, MF_SEPARATOR, 0, null);
 
-            uint resetId = (uint)ColorPalette.Colors.Count + 1;
-            uint exitId = resetId + 1;
+            uint nextId = (uint)ColorPalette.Colors.Count + 1;
+            uint resetId = nextId++;
+            uint startupId = nextId++;
+            uint updateId = nextId++;
+            uint exitId = nextId++;
+
             AppendMenuW(hMenu, MF_STRING, resetId, "Reset to Default");
+            AppendMenuW(hMenu, MF_STRING | (startupChecked ? MF_CHECKED : 0), startupId, "Run at Startup");
+
+            if (updateVersion is not null)
+            {
+                AppendMenuW(hMenu, MF_SEPARATOR, 0, null);
+                AppendMenuW(hMenu, MF_STRING, updateId, $"Update Available (v{updateVersion})");
+            }
+
             AppendMenuW(hMenu, MF_SEPARATOR, 0, null);
             AppendMenuW(hMenu, MF_STRING, exitId, "Exit");
 
@@ -73,6 +85,10 @@ internal sealed class NativeContextMenu
                 return new MenuResult(MenuAction.SelectColor, ColorPalette.Colors[cmd - 1].Color);
             else if (cmd == (int)resetId)
                 return new MenuResult(MenuAction.ResetColor);
+            else if (cmd == (int)startupId)
+                return new MenuResult(MenuAction.ToggleStartup);
+            else if (cmd == (int)updateId)
+                return new MenuResult(MenuAction.Update);
             else if (cmd == (int)exitId)
                 return new MenuResult(MenuAction.Exit);
             else
@@ -153,7 +169,7 @@ internal sealed class NativeContextMenu
     }
 }
 
-internal enum MenuAction { None, SelectColor, ResetColor, Exit }
+internal enum MenuAction { None, SelectColor, ResetColor, ToggleStartup, Update, Exit }
 
 internal readonly record struct MenuResult(MenuAction Action, Windows.UI.Color? Color = null)
 {

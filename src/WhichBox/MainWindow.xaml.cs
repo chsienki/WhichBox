@@ -15,6 +15,7 @@ public sealed partial class MainWindow : Window
     private readonly string _machineName = Environment.MachineName;
     private readonly Settings _settings;
     private readonly NativeContextMenu _contextMenu;
+    private readonly UpdateChecker _updateChecker = new();
     private readonly uint _taskbarCreatedMsg;
     private nint _prevWndProc;
     private WndProcDelegate? _wndProcDelegate; // prevent GC
@@ -70,6 +71,9 @@ public sealed partial class MainWindow : Window
         {
             CompositionMaskHelper.Apply(Root, LabelBorder, ContentHost, MaskHost, fadePixels: 24f);
             MoveToTaskbar();
+
+            // Check for updates in the background (fire and forget)
+            _ = _updateChecker.CheckAsync();
         };
 
         Closed += (_, _) => _contextMenu.Destroy();
@@ -213,7 +217,9 @@ public sealed partial class MainWindow : Window
 
     private void HandleContextMenu(int x, int y)
     {
-        var result = _contextMenu.Show(x, y);
+        var result = _contextMenu.Show(x, y,
+            startupChecked: StartupHelper.IsRegistered,
+            updateVersion: _updateChecker.LatestVersion);
         switch (result.Action)
         {
             case MenuAction.SelectColor:
@@ -225,6 +231,12 @@ public sealed partial class MainWindow : Window
                 _settings.ChosenColor = null;
                 _settings.Save();
                 ApplyColor();
+                break;
+            case MenuAction.ToggleStartup:
+                StartupHelper.SetRegistered(!StartupHelper.IsRegistered);
+                break;
+            case MenuAction.Update:
+                _ = _updateChecker.DownloadAndInstallAsync();
                 break;
             case MenuAction.Exit:
                 Close();

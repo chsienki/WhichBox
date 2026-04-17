@@ -67,22 +67,46 @@ WinUI's `MenuFlyout` positioning is broken after `SetParent`, so we use native W
 - JSON serialization uses source-generated `JsonSerializerContext` (`SettingsJsonContext`) to avoid reflection
 - The `WndProcDelegate` must be stored as a field to prevent GC collection of the delegate
 
-### install.cs (C# File-Based App)
+### Installation & Distribution
 
-A .NET 10 file-based application (`dotnet run install.cs`) that:
-1. Publishes the AOT build with `dotnet publish`
-2. Copies output to `%LOCALAPPDATA%\WhichBox\`
-3. Registers for startup via `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
-4. Kills any existing WhichBox process and launches the new one
+WhichBox uses **Inno Setup** for installation:
+- `installer.iss` defines the installer: installs to `{localappdata}\WhichBox`, creates Start Menu shortcut, registers for startup (optional), provides uninstall via Add/Remove Programs
+- Per-user install (no admin required)
+- The installer kills any running instance before installing
+- Task checkboxes: "Run at Startup" (default on), "Launch after install" (default on)
 
-**Important**: Cannot use `RedirectStandardOutput` with `dotnet publish` -- the progress UI fills the pipe buffer causing a deadlock. Use `UseShellExecute = false` without output redirection.
+### Release Workflow
+
+`.github/workflows/release.yml` triggers on `v*` tag push:
+1. Validates tag matches `VERSION` file
+2. Matrix builds: `win-x64` and `win-arm64` (AOT publish)
+3. Runs Inno Setup (`choco install innosetup`) to produce `WhichBox-{arch}-Setup.exe`
+4. Creates GitHub Release with both installers and auto-generated changelog
+
+Version is stored in the `VERSION` file at repo root and read by the csproj.
+
+### Auto-Update (UpdateChecker)
+
+On startup, the app checks the GitHub releases API for a newer version:
+- Compares `AssemblyInformationalVersion` against the latest release `tag_name`
+- If newer, stores the installer download URL for the matching architecture
+- The context menu shows "Update Available (vX.Y.Z)" which downloads and runs the installer with `/SILENT`
+- All network errors are silently ignored (fire-and-forget check)
+
+### Startup Toggle (StartupHelper)
+
+The context menu includes a "Run at Startup" checkmark item:
+- Reads/writes `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\WhichBox`
+- Uses `Environment.ProcessPath` for the registry value
+- Both the Inno installer and the app can manage this registry entry
 
 ## Project Structure
 
 ```
 WhichBox/
   WhichBox.slnx              # Solution file
-  install.cs                  # C# file-based app: build + install + startup
+  VERSION                     # Version number (read by csproj and release workflow)
+  installer.iss               # Inno Setup installer script
   src/WhichBox/
     Program.cs                # Custom Main (WinRT ComWrappersSupport init)
     App.xaml(.cs)             # WinUI 3 Application boilerplate
@@ -92,7 +116,11 @@ WhichBox/
     CompositionMaskHelper.cs  # Composition opacity mask for feathered edges
     ColorPalette.cs           # 12 muted colors, hash-based default, contrast calc
     Settings.cs               # JSON persistence (AOT-safe with source generators)
+    StartupHelper.cs          # Run at Startup registry toggle
+    UpdateChecker.cs          # GitHub release auto-update checker
     WhichBox.csproj           # Project file with AOT + XAML resource workaround
+  .github/workflows/
+    release.yml               # Tag-triggered release: build + Inno Setup + GitHub Release
 ```
 
 ## File Guide
@@ -107,8 +135,10 @@ WhichBox/
 | `CompositionMaskHelper.cs` | Static `Apply()` method sets up the composition opacity mask. Self-contained with size tracking |
 | `ColorPalette.cs` | 12 muted pastel colors, deterministic hash-based default, contrast foreground calculation |
 | `Settings.cs` | JSON persistence with `SettingsJsonContext` (source-generated for AOT). Stores chosen color |
-| `WhichBox.csproj` | Project config: AOT, unpackaged WinUI 3, `CopyXamlResourcesForAot` target |
-| `install.cs` | File-based app for build + install + startup registration |
+| `StartupHelper.cs` | Static class: reads/writes HKCU Run registry for startup toggle |
+| `UpdateChecker.cs` | Checks GitHub releases API on startup, offers silent installer download |
+| `WhichBox.csproj` | Project config: AOT, unpackaged WinUI 3, `CopyXamlResourcesForAot` target, reads `VERSION` |
+| `installer.iss` | Inno Setup script: per-user install, Start Menu, startup registry, uninstall |
 
 ## Build & Test
 
@@ -117,8 +147,8 @@ WhichBox/
 dotnet build src\WhichBox\WhichBox.csproj -c Debug
 src\WhichBox\bin\Debug\net10.0-windows10.0.26100.0\WhichBox.exe
 
-# Full AOT install (build + install + startup + launch)
-dotnet run install.cs
+# AOT publish (x64)
+dotnet publish src\WhichBox\WhichBox.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained -o publish\win-x64
 ```
 
 ## Dependencies
@@ -136,4 +166,4 @@ dotnet run install.cs
 5. **Menu popup over RDP**: HWND_MESSAGE windows don't work as popup owners over RDP. Use a real (offscreen) top-level window.
 6. **DPI after SetParent**: Do NOT blindly scale `GetWindowRect` results -- the DPI awareness context varies by machine. Instead, wrap positioning code in `SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2)` so all APIs use consistent physical-pixel coordinates. Only scale hardcoded constants (insets, gaps).
 7. **WndProcDelegate GC**: Store the delegate in a field so it isn't garbage collected while the native subclass is active.
-8. **dotnet publish pipe deadlock**: Don't redirect stdout when running dotnet publish -- the progress UI fills the buffer.
+8. **UpdateChecker and AOT**: The `GitHubRelease`/`GitHubAsset` models use source-generated `UpdateJsonContext` for AOT-safe JSON deserialization.

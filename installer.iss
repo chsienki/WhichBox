@@ -49,8 +49,10 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: runatstartup
 
 [Run]
-; Launch after install (only if task selected)
+; Launch after interactive install (only if task selected)
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent; Tasks: launchapp
+; Always relaunch after silent install (auto-update)
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifdoesntexist; Check: WizardSilent
 
 [UninstallRun]
 ; Kill WhichBox before uninstalling files

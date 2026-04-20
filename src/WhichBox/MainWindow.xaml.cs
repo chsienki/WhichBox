@@ -69,7 +69,12 @@ public sealed partial class MainWindow : Window
         // Once content renders, set up the composition mask and move to taskbar
         Root.Loaded += (_, _) =>
         {
-            CompositionMaskHelper.Apply(Root, LabelBorder, ContentHost, MaskHost, fadePixels: 24f);
+            // Scale fade distance by DPI so the gradient looks consistent across monitors.
+            // At 200% DPI, 24px fade on a ~124px-wide window ≈ 19% horizontal fade.
+            // At 100% DPI, 12px fade on a ~74px-wide window ≈ 16% horizontal fade.
+            var dpi = GetDpiForWindow(_hwnd);
+            var fadePx = 14f * (dpi / 96f);
+            CompositionMaskHelper.Apply(Root, LabelBorder, ContentHost, MaskHost, fadePixels: fadePx);
             MoveToTaskbar();
 
             // Check for updates in the background (fire and forget)
@@ -173,8 +178,24 @@ public sealed partial class MainWindow : Window
         // Inset vertically so the window doesn't fill the full taskbar height.
         var scale = GetDpiForWindow(taskbar) / 96.0;
         var verticalInset = (int)(4 * scale);
-        var estimatedWidth = (int)((_machineName.Length * 8 + 24) * scale);
         var windowHeight = taskbarHeight - (verticalInset * 2);
+
+        // Scale font size to fit the taskbar height (in logical pixels for WinUI)
+        var logicalHeight = windowHeight / scale;
+        // Font scales with taskbar height and DPI. At higher DPI the extra physical
+        // pixels let larger text look crisp; at 100% we match system tray text size.
+        var fontSize = Math.Max(10, logicalHeight * 0.275 * scale);
+
+        // Width estimate based on dynamic font size (Segoe UI Bold ~0.75 em per char)
+        var charWidth = fontSize * 0.75;
+        var horizontalPad = fontSize * 0.8;
+        var estimatedWidth = (int)((_machineName.Length * charWidth + horizontalPad * 2 + 4) * scale);
+
+        // Scale font and padding to match DPI so the colored area extends proportionally.
+        // Set directly (not via TryEnqueue) so WinUI layout updates before we measure.
+        MachineNameText.FontSize = fontSize;
+        LabelBorder.Padding = new Microsoft.UI.Xaml.Thickness(horizontalPad, 2, horizontalPad, 2);
+        Root.UpdateLayout();
 
         // First pass: set size and a temporary position (far left) so the
         // window is created at the right height, then measure its actual width.

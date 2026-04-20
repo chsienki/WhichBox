@@ -10,10 +10,11 @@
         <!-- Content layer: captured by VisualSurface, container hidden from display -->
         <Grid x:Name="ContentHost">
             <Border x:Name="LabelBorder"
+                    Padding="12,2"
                     HorizontalAlignment="Stretch"
                     VerticalAlignment="Stretch">
                 <TextBlock x:Name="MachineNameText"
-                           FontSize="22"
+                           FontSize="12"
                            FontWeight="Bold"
                            FontFamily="Segoe UI"
                            VerticalAlignment="Center"

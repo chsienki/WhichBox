@@ -181,6 +181,22 @@ internal static partial class NativeMethods
     internal const uint WM_DRAWITEM = 0x002B;
     internal const uint WM_DPICHANGED = 0x02E0;
     internal const uint WM_DISPLAYCHANGE = 0x007E;
+    internal const uint WM_WTSSESSION_CHANGE = 0x02B1;
+
+    // WTS session change reasons
+    internal const int WTS_CONSOLE_CONNECT = 0x1;
+    internal const int WTS_REMOTE_CONNECT = 0x3;
+    internal const int WTS_SESSION_UNLOCK = 0x8;
+
+    internal const int NOTIFY_FOR_THIS_SESSION = 0;
+
+    [DllImport("wtsapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool WTSRegisterSessionNotification(nint hWnd, int dwFlags);
+
+    [DllImport("wtsapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool WTSUnRegisterSessionNotification(nint hWnd);
 
     // Drawing constants
     internal const uint ODS_SELECTED = 0x0001;

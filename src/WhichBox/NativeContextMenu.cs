@@ -57,12 +57,14 @@ internal sealed class NativeContextMenu
             uint nextId = (uint)ColorPalette.Colors.Count + 1;
             uint resetId = nextId++;
             uint startupId = nextId++;
+            uint reattachId = nextId++;
             uint checkUpdateId = nextId++;
             uint updateId = nextId++;
             uint exitId = nextId++;
 
             AppendMenuW(hMenu, MF_STRING, resetId, "Reset to Default");
             AppendMenuW(hMenu, MF_STRING | (startupChecked ? MF_CHECKED : 0), startupId, "Run at Startup");
+            AppendMenuW(hMenu, MF_STRING, reattachId, "Re-attach to Taskbar");
 
             AppendMenuW(hMenu, MF_SEPARATOR, 0, null);
             if (updateVersion is not null)
@@ -92,6 +94,8 @@ internal sealed class NativeContextMenu
                 return new MenuResult(MenuAction.ResetColor);
             else if (cmd == (int)startupId)
                 return new MenuResult(MenuAction.ToggleStartup);
+            else if (cmd == (int)reattachId)
+                return new MenuResult(MenuAction.ReattachToTaskbar);
             else if (cmd == (int)checkUpdateId)
                 return new MenuResult(MenuAction.CheckForUpdates);
             else if (cmd == (int)updateId)
@@ -176,7 +180,7 @@ internal sealed class NativeContextMenu
     }
 }
 
-internal enum MenuAction { None, SelectColor, ResetColor, ToggleStartup, CheckForUpdates, Update, Exit }
+internal enum MenuAction { None, SelectColor, ResetColor, ToggleStartup, ReattachToTaskbar, CheckForUpdates, Update, Exit }
 
 internal readonly record struct MenuResult(MenuAction Action, Windows.UI.Color? Color = null)
 {

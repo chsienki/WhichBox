@@ -31,7 +31,8 @@ public sealed partial class MainWindow : Window
         _settings = Settings.Load();
         _contextMenu = new NativeContextMenu();
 
-        DebugLog.Write($"MainWindow ctor: hwnd=0x{_hwnd:X} machine={_machineName} sessionId={Environment.GetEnvironmentVariable("SESSIONNAME")}");
+        var initialTaskbar = FindWindowW("Shell_TrayWnd", null);
+        Logger.Info($"MainWindow ctor: hwnd=0x{_hwnd:X} parent=0x{GetParent(_hwnd):X} taskbar=0x{initialTaskbar:X} machine={_machineName} dpi={GetDpiForWindow(_hwnd)}");
 
         // Register for the shell's TaskbarCreated message, broadcast when
         // explorer.exe recreates the taskbar (e.g., after a crash or DPI change).
@@ -68,27 +69,41 @@ public sealed partial class MainWindow : Window
         // the pointer event chain.
         Root.RightTapped += (_, e) =>
         {
-            e.Handled = true;
-            GetCursorPos(out var pt);
-            DispatcherQueue.TryEnqueue(() => HandleContextMenu(pt.X, pt.Y));
+            try
+            {
+                e.Handled = true;
+                GetCursorPos(out var pt);
+                SafeEnqueue("HandleContextMenu", () => HandleContextMenu(pt.X, pt.Y));
+            }
+            catch (Exception ex)
+            {
+                Logger.Crash("Root.RightTapped", ex);
+            }
         };
 
         // Once content renders, set up the composition mask and move to taskbar
         Root.Loaded += (_, _) =>
         {
-            DebugLog.Write("Root.Loaded fired");
-            // Scale fade distance by DPI so the gradient looks consistent across monitors.
-            // At 200% DPI, 24px fade on a ~124px-wide window ≈ 19% horizontal fade.
-            // At 100% DPI, 12px fade on a ~74px-wide window ≈ 16% horizontal fade.
-            var dpi = GetDpiForWindow(_hwnd);
-            var fadePx = 14f * (dpi / 96f);
-            CompositionMaskHelper.Apply(Root, LabelBorder, ContentHost, MaskHost, fadePixels: fadePx);
-            MoveToTaskbar();
+            try
+            {
+                Logger.Info("Root.Loaded fired");
+                // Scale fade distance by DPI so the gradient looks consistent across monitors.
+                // At 200% DPI, 24px fade on a ~124px-wide window ≈ 19% horizontal fade.
+                // At 100% DPI, 12px fade on a ~74px-wide window ≈ 16% horizontal fade.
+                var dpi = GetDpiForWindow(_hwnd);
+                var fadePx = 14f * (dpi / 96f);
+                CompositionMaskHelper.Apply(Root, LabelBorder, ContentHost, MaskHost, fadePixels: fadePx);
+                MoveToTaskbar();
 
-            // Check for updates in the background (fire and forget)
-            _updateChecker.UpdateFound += () =>
-                DispatcherQueue.TryEnqueue(() => UpdateDot.Visibility = Visibility.Visible);
-            _ = _updateChecker.CheckAsync();
+                // Check for updates in the background (fire and forget)
+                _updateChecker.UpdateFound += () =>
+                    SafeEnqueue("UpdateChecker.UpdateFound", () => UpdateDot.Visibility = Visibility.Visible);
+                _ = _updateChecker.CheckAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.Crash("Root.Loaded", ex);
+            }
         };
 
         // Periodic health check: if our parent taskbar HWND becomes invalid
@@ -97,55 +112,120 @@ public sealed partial class MainWindow : Window
         _healthCheck = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _healthCheck.Tick += (_, _) =>
         {
-            var taskbar = FindWindowW("Shell_TrayWnd", null);
-            if (taskbar == 0) return;
-            var currentParent = GetParent(_hwnd);
-            if (!_parentedToTaskbar || currentParent != taskbar)
+            try
             {
-                DebugLog.Write($"HealthCheck: re-parenting needed (flag={_parentedToTaskbar} parent=0x{currentParent:X} taskbar=0x{taskbar:X})");
-                _parentedToTaskbar = false;
-                MoveToTaskbar();
+                var taskbar = FindWindowW("Shell_TrayWnd", null);
+                if (taskbar == 0)
+                {
+                    Logger.Warn($"HealthCheck: Shell_TrayWnd not found (Win32 err={Marshal.GetLastPInvokeError()})");
+                    return;
+                }
+                var currentParent = GetParent(_hwnd);
+                if (!_parentedToTaskbar || currentParent != taskbar)
+                {
+                    Logger.Info($"HealthCheck: re-parenting needed (flag={_parentedToTaskbar} parent=0x{currentParent:X} taskbar=0x{taskbar:X})");
+                    _parentedToTaskbar = false;
+                    MoveToTaskbar();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Crash("HealthCheck.Tick", ex);
             }
         };
         _healthCheck.Start();
 
         Closed += (_, _) =>
         {
-            _healthCheck.Stop();
-            WTSUnRegisterSessionNotification(_hwnd);
-            _contextMenu.Destroy();
+            try
+            {
+                Logger.Info("MainWindow.Closed fired -- shutting down cleanly");
+                _healthCheck.Stop();
+                WTSUnRegisterSessionNotification(_hwnd);
+                _contextMenu.Destroy();
+            }
+            catch (Exception ex)
+            {
+                Logger.Crash("MainWindow.Closed", ex);
+            }
         };
+    }
+
+    /// <summary>
+    /// Posts an action onto the dispatcher queue and ensures any exception is
+    /// logged. Without this wrapper, exceptions in posted callbacks bypass
+    /// every handler we registered (TaskScheduler, AppDomain, Application)
+    /// and silently disappear, which is exactly the failure mode we are
+    /// trying to diagnose.
+    /// </summary>
+    private void SafeEnqueue(string source, Action action)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try { action(); }
+            catch (Exception ex) { Logger.Crash(source, ex); }
+        });
     }
 
     private nint WndProc(nint hWnd, uint msg, nint wParam, nint lParam)
     {
-        if (msg == WM_DPICHANGED || msg == WM_DISPLAYCHANGE)
+        try
         {
-            // DPI or display configuration changed (e.g., RDP -> physical console).
-            // Defer repositioning so the taskbar has time to finish resizing.
-            DispatcherQueue.TryEnqueue(() => RepositionInTaskbar());
-        }
-        else if (msg == WM_WTSSESSION_CHANGE)
-        {
-            var reason = (int)wParam;
-            if (reason == WTS_CONSOLE_CONNECT || reason == WTS_REMOTE_CONNECT || reason == WTS_SESSION_UNLOCK)
+            if (msg == WM_DPICHANGED || msg == WM_DISPLAYCHANGE)
             {
-                // Session switched (e.g., RDP to physical console or vice versa).
-                // The taskbar HWND may have changed, so re-parent after a short delay
-                // to let the shell finish setting up.
-                _parentedToTaskbar = false;
-                DispatcherQueue.TryEnqueue(async () =>
+                Logger.Info($"WndProc: {(msg == WM_DPICHANGED ? "WM_DPICHANGED" : "WM_DISPLAYCHANGE")} wParam=0x{wParam:X} lParam=0x{lParam:X}");
+                // DPI or display configuration changed (e.g., RDP -> physical console).
+                // Defer repositioning so the taskbar has time to finish resizing.
+                SafeEnqueue("WndProc.RepositionAfterDpiChange", () => RepositionInTaskbar());
+            }
+            else if (msg == WM_WTSSESSION_CHANGE)
+            {
+                var reason = (int)wParam;
+                Logger.Info($"WndProc: WM_WTSSESSION_CHANGE reason={WtsReasonName(reason)} sessionId=0x{lParam:X}");
+                if (reason == WTS_CONSOLE_CONNECT || reason == WTS_REMOTE_CONNECT || reason == WTS_SESSION_UNLOCK)
                 {
-                    await Task.Delay(1000);
-                    MoveToTaskbar();
-                });
+                    // Session switched (e.g., RDP to physical console or vice versa).
+                    // The taskbar HWND may have changed, so re-parent after a short delay
+                    // to let the shell finish setting up.
+                    _parentedToTaskbar = false;
+                    DispatcherQueue.TryEnqueue(async () =>
+                    {
+                        try
+                        {
+                            await Task.Delay(1000);
+                            MoveToTaskbar();
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Crash("WndProc.SessionChangeReparent", ex);
+                        }
+                    });
+                }
+            }
+            else if (_taskbarCreatedMsg != 0 && msg == _taskbarCreatedMsg)
+            {
+                Logger.Info("WndProc: TaskbarCreated -- explorer recreated the taskbar, re-parenting");
+                _parentedToTaskbar = false;
+                SafeEnqueue("WndProc.TaskbarCreatedReparent", () => MoveToTaskbar());
+            }
+            else if (msg == WM_CLOSE || msg == WM_DESTROY || msg == WM_NCDESTROY)
+            {
+                // Catch unexpected window destruction. We don't normally close
+                // the window except via the Exit menu item, so seeing these
+                // messages outside of that flow is a strong diagnostic clue.
+                var name = msg switch
+                {
+                    WM_CLOSE => "WM_CLOSE",
+                    WM_DESTROY => "WM_DESTROY",
+                    WM_NCDESTROY => "WM_NCDESTROY",
+                    _ => $"0x{msg:X}"
+                };
+                Logger.Info($"WndProc: {name} received parent=0x{GetParent(hWnd):X} taskbar=0x{FindWindowW("Shell_TrayWnd", null):X}");
             }
         }
-        else if (_taskbarCreatedMsg != 0 && msg == _taskbarCreatedMsg)
+        catch (Exception ex)
         {
-            // Explorer recreated the taskbar -- need to re-parent entirely.
-            _parentedToTaskbar = false;
-            DispatcherQueue.TryEnqueue(() => MoveToTaskbar());
+            Logger.Crash($"WndProc msg=0x{msg:X4}", ex);
         }
 
         return CallWindowProcW(_prevWndProc, hWnd, msg, wParam, lParam);
@@ -159,10 +239,10 @@ public sealed partial class MainWindow : Window
     private void MoveToTaskbar()
     {
         var taskbar = FindWindowW("Shell_TrayWnd", null);
-        DebugLog.Write($"MoveToTaskbar: hwnd=0x{_hwnd:X} taskbar=0x{taskbar:X} parentedFlag={_parentedToTaskbar} currentParent=0x{GetParent(_hwnd):X}");
+        Logger.Info($"MoveToTaskbar: hwnd=0x{_hwnd:X} taskbar=0x{taskbar:X} parentedFlag={_parentedToTaskbar} currentParent=0x{GetParent(_hwnd):X}");
         if (taskbar == 0)
         {
-            DebugLog.Write("MoveToTaskbar: Shell_TrayWnd not found, aborting");
+            Logger.Warn($"MoveToTaskbar: Shell_TrayWnd not found, aborting (Win32 err={Marshal.GetLastPInvokeError()})");
             return;
         }
 
@@ -172,15 +252,16 @@ public sealed partial class MainWindow : Window
             var style = GetWindowLongW(_hwnd, GWL_STYLE);
             var newStyle = (style & ~(WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) | WS_CHILD;
             SetWindowLongW(_hwnd, GWL_STYLE, newStyle);
-            DebugLog.Write($"MoveToTaskbar: style 0x{style:X} -> 0x{newStyle:X}");
+            Logger.Info($"MoveToTaskbar: style 0x{style:X} -> 0x{newStyle:X}");
 
             var prevParent = SetParent(_hwnd, taskbar);
+            var setParentErr = Marshal.GetLastPInvokeError();
             var newParent = GetParent(_hwnd);
-            DebugLog.Write($"MoveToTaskbar: SetParent returned prev=0x{prevParent:X}, GetParent now=0x{newParent:X} (expected 0x{taskbar:X})");
+            Logger.Info($"MoveToTaskbar: SetParent returned prev=0x{prevParent:X} (Win32 err={setParentErr}), GetParent now=0x{newParent:X} (expected 0x{taskbar:X})");
 
             if (newParent != taskbar)
             {
-                DebugLog.Write("MoveToTaskbar: SetParent FAILED -- not setting _parentedToTaskbar flag");
+                Logger.Warn("MoveToTaskbar: SetParent FAILED -- not setting _parentedToTaskbar flag");
                 return;
             }
             _parentedToTaskbar = true;
@@ -234,12 +315,12 @@ public sealed partial class MainWindow : Window
     {
         if (!GetWindowRect(taskbar, out var taskbarRect))
         {
-            DebugLog.Write("PositionInTaskbar: GetWindowRect(taskbar) failed");
+            Logger.Warn($"PositionInTaskbar: GetWindowRect(taskbar) failed (Win32 err={Marshal.GetLastPInvokeError()})");
             return;
         }
         var taskbarHeight = taskbarRect.Bottom - taskbarRect.Top;
         var taskbarWidth = taskbarRect.Right - taskbarRect.Left;
-        DebugLog.Write($"PositionInTaskbar: taskbarRect=({taskbarRect.Left},{taskbarRect.Top},{taskbarRect.Right},{taskbarRect.Bottom}) size={taskbarWidth}x{taskbarHeight}");
+        Logger.Info($"PositionInTaskbar: taskbarRect=({taskbarRect.Left},{taskbarRect.Top},{taskbarRect.Right},{taskbarRect.Bottom}) size={taskbarWidth}x{taskbarHeight}");
 
         // Inset vertically so the window doesn't fill the full taskbar height.
         var scale = GetDpiForWindow(taskbar) / 96.0;
@@ -265,11 +346,19 @@ public sealed partial class MainWindow : Window
 
         // First pass: set size and a temporary position (far left) so the
         // window is created at the right height, then measure its actual width.
-        SetWindowPos(_hwnd, 0, 0, verticalInset, estimatedWidth, windowHeight,
+        var firstPass = SetWindowPos(_hwnd, 0, 0, verticalInset, estimatedWidth, windowHeight,
             SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        if (!firstPass)
+        {
+            Logger.Warn($"PositionInTaskbar: first-pass SetWindowPos failed (Win32 err={Marshal.GetLastPInvokeError()})");
+        }
 
         // Read the actual window width -- WinUI may have clamped it to a minimum.
-        if (!GetWindowRect(_hwnd, out var actualRect)) return;
+        if (!GetWindowRect(_hwnd, out var actualRect))
+        {
+            Logger.Warn($"PositionInTaskbar: GetWindowRect(self) after first pass failed (Win32 err={Marshal.GetLastPInvokeError()})");
+            return;
+        }
         var actualWidth = actualRect.Right - actualRect.Left;
 
         // Find the anchor point: TrayNotifyWnd left edge (includes the chevron).
@@ -288,11 +377,12 @@ public sealed partial class MainWindow : Window
         // Second pass: position using the actual measured width.
         var ok = SetWindowPos(_hwnd, 0, xPos, verticalInset, actualWidth, windowHeight,
             SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        DebugLog.Write($"PositionInTaskbar: final SetWindowPos x={xPos} y={verticalInset} w={actualWidth} h={windowHeight} ok={ok} parent=0x{GetParent(_hwnd):X}");
+        var setPosErr = ok ? 0 : Marshal.GetLastPInvokeError();
+        Logger.Info($"PositionInTaskbar: final SetWindowPos x={xPos} y={verticalInset} w={actualWidth} h={windowHeight} ok={ok} err={setPosErr} parent=0x{GetParent(_hwnd):X}");
 
         if (GetWindowRect(_hwnd, out var finalRect))
         {
-            DebugLog.Write($"PositionInTaskbar: post-position GetWindowRect=({finalRect.Left},{finalRect.Top},{finalRect.Right},{finalRect.Bottom})");
+            Logger.Info($"PositionInTaskbar: post-position GetWindowRect=({finalRect.Left},{finalRect.Top},{finalRect.Right},{finalRect.Bottom})");
         }
     }
 
@@ -331,9 +421,13 @@ public sealed partial class MainWindow : Window
                 StartupHelper.SetRegistered(!StartupHelper.IsRegistered);
                 break;
             case MenuAction.ReattachToTaskbar:
-                DebugLog.Write("ReattachToTaskbar: user requested manual re-attach");
+                Logger.Info("ReattachToTaskbar: user requested manual re-attach");
                 _parentedToTaskbar = false;
                 MoveToTaskbar();
+                break;
+            case MenuAction.OpenLogFolder:
+                Logger.Info("OpenLogFolder: user requested log folder");
+                Logger.OpenLogFolder();
                 break;
             case MenuAction.CheckForUpdates:
                 _ = _updateChecker.CheckAsync();

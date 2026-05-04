@@ -75,9 +75,11 @@ internal sealed class UpdateChecker
             InstallerUrl = asset.BrowserDownloadUrl;
             UpdateFound?.Invoke();
         }
-        catch
+        catch (Exception ex)
         {
-            // Network errors, rate limits, etc. -- silently ignore
+            // Network errors, rate limits, etc. -- silently ignore for the user
+            // but log so we can diagnose if updates are persistently failing.
+            Logger.Warn($"UpdateChecker.CheckAsync failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -106,9 +108,10 @@ internal sealed class UpdateChecker
                 UseShellExecute = true
             });
         }
-        catch
+        catch (Exception ex)
         {
             // Best effort -- if download fails, user can manually download
+            Logger.Warn($"UpdateChecker.DownloadAndInstallAsync failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 

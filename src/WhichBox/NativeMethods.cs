@@ -8,26 +8,26 @@ namespace WhichBox;
 internal static partial class NativeMethods
 {
     // Window management
-    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     internal static partial nint FindWindowW(string lpClassName, string? lpWindowName);
 
-    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     internal static partial nint FindWindowExW(nint hWndParent, nint hWndChildAfter, string? lpszClass, string? lpszWindow);
 
-    [LibraryImport("user32.dll")]
+    [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GetWindowRect(nint hWnd, out RECT lpRect);
 
-    [LibraryImport("user32.dll")]
+    [LibraryImport("user32.dll", SetLastError = true)]
     internal static partial int GetWindowLongW(nint hWnd, int nIndex);
 
-    [LibraryImport("user32.dll")]
+    [LibraryImport("user32.dll", SetLastError = true)]
     internal static partial int SetWindowLongW(nint hWnd, int nIndex, int dwNewLong);
 
-    [LibraryImport("user32.dll")]
+    [LibraryImport("user32.dll", SetLastError = true)]
     internal static partial nint SetParent(nint hWndChild, nint hWndNewParent);
 
-    [LibraryImport("user32.dll")]
+    [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 
@@ -182,11 +182,38 @@ internal static partial class NativeMethods
     internal const uint WM_DPICHANGED = 0x02E0;
     internal const uint WM_DISPLAYCHANGE = 0x007E;
     internal const uint WM_WTSSESSION_CHANGE = 0x02B1;
+    internal const uint WM_CLOSE = 0x0010;
+    internal const uint WM_DESTROY = 0x0002;
+    internal const uint WM_NCDESTROY = 0x0082;
 
     // WTS session change reasons
     internal const int WTS_CONSOLE_CONNECT = 0x1;
+    internal const int WTS_CONSOLE_DISCONNECT = 0x2;
     internal const int WTS_REMOTE_CONNECT = 0x3;
+    internal const int WTS_REMOTE_DISCONNECT = 0x4;
+    internal const int WTS_SESSION_LOGON = 0x5;
+    internal const int WTS_SESSION_LOGOFF = 0x6;
+    internal const int WTS_SESSION_LOCK = 0x7;
     internal const int WTS_SESSION_UNLOCK = 0x8;
+    internal const int WTS_SESSION_REMOTE_CONTROL = 0x9;
+    internal const int WTS_SESSION_CREATE = 0xA;
+    internal const int WTS_SESSION_TERMINATE = 0xB;
+
+    internal static string WtsReasonName(int reason) => reason switch
+    {
+        WTS_CONSOLE_CONNECT => "CONSOLE_CONNECT",
+        WTS_CONSOLE_DISCONNECT => "CONSOLE_DISCONNECT",
+        WTS_REMOTE_CONNECT => "REMOTE_CONNECT",
+        WTS_REMOTE_DISCONNECT => "REMOTE_DISCONNECT",
+        WTS_SESSION_LOGON => "SESSION_LOGON",
+        WTS_SESSION_LOGOFF => "SESSION_LOGOFF",
+        WTS_SESSION_LOCK => "SESSION_LOCK",
+        WTS_SESSION_UNLOCK => "SESSION_UNLOCK",
+        WTS_SESSION_REMOTE_CONTROL => "SESSION_REMOTE_CONTROL",
+        WTS_SESSION_CREATE => "SESSION_CREATE",
+        WTS_SESSION_TERMINATE => "SESSION_TERMINATE",
+        _ => $"UNKNOWN(0x{reason:X})"
+    };
 
     internal const int NOTIFY_FOR_THIS_SESSION = 0;
 
@@ -206,6 +233,7 @@ internal static partial class NativeMethods
     internal const uint DT_SINGLELINE = 0x0020;
     internal const int SM_CXMENUCHECK = 71;
     internal const int SM_CYMENU = 15;
+    internal const int SM_REMOTESESSION = 0x1000;
 
     internal static uint ToCOLORREF(Windows.UI.Color c) =>
         (uint)(c.R | (c.G << 8) | (c.B << 16));

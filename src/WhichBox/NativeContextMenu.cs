@@ -58,6 +58,7 @@ internal sealed class NativeContextMenu
             uint resetId = nextId++;
             uint startupId = nextId++;
             uint reattachId = nextId++;
+            uint openLogId = nextId++;
             uint checkUpdateId = nextId++;
             uint updateId = nextId++;
             uint exitId = nextId++;
@@ -65,6 +66,7 @@ internal sealed class NativeContextMenu
             AppendMenuW(hMenu, MF_STRING, resetId, "Reset to Default");
             AppendMenuW(hMenu, MF_STRING | (startupChecked ? MF_CHECKED : 0), startupId, "Run at Startup");
             AppendMenuW(hMenu, MF_STRING, reattachId, "Re-attach to Taskbar");
+            AppendMenuW(hMenu, MF_STRING, openLogId, "Open Log Folder");
 
             AppendMenuW(hMenu, MF_SEPARATOR, 0, null);
             if (updateVersion is not null)
@@ -96,6 +98,8 @@ internal sealed class NativeContextMenu
                 return new MenuResult(MenuAction.ToggleStartup);
             else if (cmd == (int)reattachId)
                 return new MenuResult(MenuAction.ReattachToTaskbar);
+            else if (cmd == (int)openLogId)
+                return new MenuResult(MenuAction.OpenLogFolder);
             else if (cmd == (int)checkUpdateId)
                 return new MenuResult(MenuAction.CheckForUpdates);
             else if (cmd == (int)updateId)
@@ -119,68 +123,77 @@ internal sealed class NativeContextMenu
 
     private unsafe nint MenuOwnerWndProc(nint hWnd, uint msg, nint wParam, nint lParam)
     {
-        if (msg == WM_MEASUREITEM && lParam != 0)
+        try
         {
-            ref var mis = ref Unsafe.AsRef<MEASUREITEMSTRUCT>((void*)lParam);
-            if (mis.itemID >= 1 && mis.itemID <= (uint)ColorPalette.Colors.Count)
+            if (msg == WM_MEASUREITEM && lParam != 0)
             {
-                mis.itemHeight = (uint)GetSystemMetrics(SM_CYMENU);
-                mis.itemWidth = (uint)(COLOR_SWATCH_SIZE + MENU_ITEM_PADDING * 3 + 100);
-                return 1;
+                ref var mis = ref Unsafe.AsRef<MEASUREITEMSTRUCT>((void*)lParam);
+                if (mis.itemID >= 1 && mis.itemID <= (uint)ColorPalette.Colors.Count)
+                {
+                    mis.itemHeight = (uint)GetSystemMetrics(SM_CYMENU);
+                    mis.itemWidth = (uint)(COLOR_SWATCH_SIZE + MENU_ITEM_PADDING * 3 + 100);
+                    return 1;
+                }
+            }
+            else if (msg == WM_DRAWITEM && lParam != 0)
+            {
+                ref var dis = ref Unsafe.AsRef<DRAWITEMSTRUCT>((void*)lParam);
+                if (dis.itemID >= 1 && dis.itemID <= (uint)ColorPalette.Colors.Count)
+                {
+                    var entry = ColorPalette.Colors[(int)dis.itemID - 1];
+                    var hdc = dis.hDC;
+                    var rc = dis.rcItem;
+                    bool selected = (dis.itemState & ODS_SELECTED) != 0;
+
+                    // Draw background
+                    uint bgColor = selected ? 0x00D77800u : 0x00FFFFFFu;
+                    var bgBrush = CreateSolidBrush(bgColor);
+                    FillRect(hdc, ref rc, bgBrush);
+                    DeleteObject(bgBrush);
+
+                    // Draw color swatch
+                    int swatchY = rc.Top + (rc.Bottom - rc.Top - COLOR_SWATCH_SIZE) / 2;
+                    int swatchX = rc.Left + MENU_ITEM_PADDING;
+                    var swatchRect = new RECT
+                    {
+                        Left = swatchX,
+                        Top = swatchY,
+                        Right = swatchX + COLOR_SWATCH_SIZE,
+                        Bottom = swatchY + COLOR_SWATCH_SIZE
+                    };
+                    var colorBrush = CreateSolidBrush(ToCOLORREF(entry.Color));
+                    FillRect(hdc, ref swatchRect, colorBrush);
+                    DeleteObject(colorBrush);
+
+                    // Draw text
+                    SetBkMode(hdc, TRANSPARENT);
+                    SetTextColor(hdc, selected ? 0x00FFFFFFu : 0x00000000u);
+                    var textRect = new RECT
+                    {
+                        Left = swatchX + COLOR_SWATCH_SIZE + MENU_ITEM_PADDING,
+                        Top = rc.Top,
+                        Right = rc.Right - MENU_ITEM_PADDING,
+                        Bottom = rc.Bottom
+                    };
+                    DrawTextW(hdc, entry.Name, entry.Name.Length, ref textRect,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+                    return 1;
+                }
             }
         }
-        else if (msg == WM_DRAWITEM && lParam != 0)
+        catch (Exception ex)
         {
-            ref var dis = ref Unsafe.AsRef<DRAWITEMSTRUCT>((void*)lParam);
-            if (dis.itemID >= 1 && dis.itemID <= (uint)ColorPalette.Colors.Count)
-            {
-                var entry = ColorPalette.Colors[(int)dis.itemID - 1];
-                var hdc = dis.hDC;
-                var rc = dis.rcItem;
-                bool selected = (dis.itemState & ODS_SELECTED) != 0;
-
-                // Draw background
-                uint bgColor = selected ? 0x00D77800u : 0x00FFFFFFu;
-                var bgBrush = CreateSolidBrush(bgColor);
-                FillRect(hdc, ref rc, bgBrush);
-                DeleteObject(bgBrush);
-
-                // Draw color swatch
-                int swatchY = rc.Top + (rc.Bottom - rc.Top - COLOR_SWATCH_SIZE) / 2;
-                int swatchX = rc.Left + MENU_ITEM_PADDING;
-                var swatchRect = new RECT
-                {
-                    Left = swatchX,
-                    Top = swatchY,
-                    Right = swatchX + COLOR_SWATCH_SIZE,
-                    Bottom = swatchY + COLOR_SWATCH_SIZE
-                };
-                var colorBrush = CreateSolidBrush(ToCOLORREF(entry.Color));
-                FillRect(hdc, ref swatchRect, colorBrush);
-                DeleteObject(colorBrush);
-
-                // Draw text
-                SetBkMode(hdc, TRANSPARENT);
-                SetTextColor(hdc, selected ? 0x00FFFFFFu : 0x00000000u);
-                var textRect = new RECT
-                {
-                    Left = swatchX + COLOR_SWATCH_SIZE + MENU_ITEM_PADDING,
-                    Top = rc.Top,
-                    Right = rc.Right - MENU_ITEM_PADDING,
-                    Bottom = rc.Bottom
-                };
-                DrawTextW(hdc, entry.Name, entry.Name.Length, ref textRect,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-                return 1;
-            }
+            // Owner-draw runs on the UI thread but the exception would
+            // propagate through the menu pump and bypass App.UnhandledException.
+            Logger.Crash($"MenuOwnerWndProc msg=0x{msg:X4}", ex);
         }
 
         return CallWindowProcW(_prevWndProc, hWnd, msg, wParam, lParam);
     }
 }
 
-internal enum MenuAction { None, SelectColor, ResetColor, ToggleStartup, ReattachToTaskbar, CheckForUpdates, Update, Exit }
+internal enum MenuAction { None, SelectColor, ResetColor, ToggleStartup, ReattachToTaskbar, OpenLogFolder, CheckForUpdates, Update, Exit }
 
 internal readonly record struct MenuResult(MenuAction Action, Windows.UI.Color? Color = null)
 {

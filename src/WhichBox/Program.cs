@@ -12,6 +12,11 @@ internal static class Program
         // very next call dies before any exception can be caught.
         Logger.LogStartupBanner();
 
+        // Install the native unhandled-exception filter as early as possible
+        // so we can capture a minidump for crashes during WinUI startup.
+        // Re-installed from MainWindow.ctor in case WinUI overrode us.
+        NativeCrashHandler.Install();
+
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
             var ex = e.ExceptionObject as Exception

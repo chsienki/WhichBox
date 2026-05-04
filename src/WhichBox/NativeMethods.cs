@@ -153,6 +153,94 @@ internal static partial class NativeMethods
         public nint itemData;
     }
 
+    // ====== Crash handling / minidump support ======
+    // EXCEPTION_RECORD is truncated -- only the first four fields are
+    // accessed via pointer dereference. The native struct has more fields
+    // (NumberParameters, ExceptionInformation[15]) but we never pass it
+    // by value, so a smaller layout still gives correct field offsets.
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct EXCEPTION_RECORD
+    {
+        public uint ExceptionCode;
+        public uint ExceptionFlags;
+        public EXCEPTION_RECORD* NestedRecord;
+        public nint ExceptionAddress;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct EXCEPTION_POINTERS
+    {
+        public EXCEPTION_RECORD* ExceptionRecord;
+        public nint ContextRecord;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct MINIDUMP_EXCEPTION_INFORMATION
+    {
+        public uint ThreadId;
+        public EXCEPTION_POINTERS* ExceptionPointers;
+        public int ClientPointers;
+    }
+
+    internal const int EXCEPTION_CONTINUE_SEARCH = 0;
+    internal const int EXCEPTION_EXECUTE_HANDLER = 1;
+
+    internal const uint MiniDumpNormal = 0x00000000;
+    internal const uint MiniDumpWithDataSegs = 0x00000001;
+    internal const uint MiniDumpWithUnloadedModules = 0x00000020;
+    internal const uint MiniDumpWithProcessThreadData = 0x00000100;
+    internal const uint MiniDumpWithThreadInfo = 0x00001000;
+
+    // CreateFileW constants
+    internal const uint GENERIC_WRITE = 0x40000000;
+    internal const uint CREATE_ALWAYS = 2;
+    internal const uint FILE_ATTRIBUTE_NORMAL = 0x80;
+    internal static readonly nint INVALID_HANDLE_VALUE = -1;
+
+    // DWM
+    internal const uint DWMWA_CLOAKED = 14;
+
+    [LibraryImport("kernel32.dll")]
+    internal static partial nint SetUnhandledExceptionFilter(nint lpTopLevelExceptionFilter);
+
+    [LibraryImport("kernel32.dll")]
+    internal static partial uint GetCurrentThreadId();
+
+    [LibraryImport("kernel32.dll")]
+    internal static partial nint GetCurrentProcess();
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    internal static partial nint CreateFileW(
+        nint lpFileName, uint dwDesiredAccess, uint dwShareMode,
+        nint lpSecurityAttributes, uint dwCreationDisposition,
+        uint dwFlagsAndAttributes, nint hTemplateFile);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool CloseHandle(nint hObject);
+
+    [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    internal static partial nint LoadLibraryW(string lpLibFileName);
+
+    [LibraryImport("dbghelp.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool MiniDumpWriteDump(
+        nint hProcess, uint processId, nint hFile, uint dumpType,
+        MINIDUMP_EXCEPTION_INFORMATION* exceptionParam,
+        nint userStreamParam, nint callbackParam);
+
+    // Heartbeat / window-state diagnostics
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsWindow(nint hWnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsWindowVisible(nint hWnd);
+
+    [LibraryImport("dwmapi.dll")]
+    internal static partial int DwmGetWindowAttribute(nint hwnd, uint dwAttribute, out int pvAttribute, uint cbAttribute);
+
     // Window style constants
     internal const int GWL_STYLE = -16;
     internal const int GWLP_WNDPROC = -4;

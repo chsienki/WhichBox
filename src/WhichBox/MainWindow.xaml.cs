@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -21,6 +22,7 @@ public sealed partial class MainWindow : Window
     private nint _prevWndProc;
     private WndProcDelegate? _wndProcDelegate; // prevent GC
     private bool _parentedToTaskbar;
+    private int _heartbeatTickCounter;
 
     public MainWindow()
     {
@@ -30,6 +32,10 @@ public sealed partial class MainWindow : Window
         _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(_hwnd));
         _settings = Settings.Load();
         _contextMenu = new NativeContextMenu();
+
+        // Re-assert the native crash filter in case WinUI / WindowsAppRuntime
+        // installed its own SetUnhandledExceptionFilter during initialization.
+        NativeCrashHandler.Install();
 
         var initialTaskbar = FindWindowW("Shell_TrayWnd", null);
         Logger.Info($"MainWindow ctor: hwnd=0x{_hwnd:X} parent=0x{GetParent(_hwnd):X} taskbar=0x{initialTaskbar:X} machine={_machineName} dpi={GetDpiForWindow(_hwnd)}");
@@ -108,7 +114,9 @@ public sealed partial class MainWindow : Window
 
         // Periodic health check: if our parent taskbar HWND becomes invalid
         // (e.g., after session switch, Explorer restart we somehow missed),
-        // re-parent to the current taskbar.
+        // re-parent to the current taskbar. Also emits a heartbeat once a
+        // minute so a silent disappearance can be pinned down to a 60-second
+        // window in the log.
         _healthCheck = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _healthCheck.Tick += (_, _) =>
         {
@@ -126,6 +134,13 @@ public sealed partial class MainWindow : Window
                     Logger.Info($"HealthCheck: re-parenting needed (flag={_parentedToTaskbar} parent=0x{currentParent:X} taskbar=0x{taskbar:X})");
                     _parentedToTaskbar = false;
                     MoveToTaskbar();
+                }
+
+                // Heartbeat: 12 ticks * 5s = 60s.
+                if (++_heartbeatTickCounter >= 12)
+                {
+                    _heartbeatTickCounter = 0;
+                    EmitHeartbeat(currentParent, taskbar);
                 }
             }
             catch (Exception ex)
@@ -165,6 +180,37 @@ public sealed partial class MainWindow : Window
             try { action(); }
             catch (Exception ex) { Logger.Crash(source, ex); }
         });
+    }
+
+    /// <summary>
+    /// Writes a one-line status snapshot to the log every 60 seconds. If the
+    /// process dies silently, the absence of further heartbeats narrows the
+    /// time-of-death to a 60-second window. Includes DWM-cloaked state and
+    /// IsWindow/IsWindowVisible so we can also tell "process is alive but
+    /// the window was destroyed/cloaked" apart from "process is dead".
+    /// </summary>
+    private void EmitHeartbeat(nint currentParent, nint taskbar)
+    {
+        try
+        {
+            bool isWindow = IsWindow(_hwnd);
+            bool isVisible = isWindow && IsWindowVisible(_hwnd);
+            int cloaked = 0;
+            if (isWindow)
+            {
+                // Best-effort -- ignore HRESULT, default 0 means "not cloaked"
+                _ = DwmGetWindowAttribute(_hwnd, DWMWA_CLOAKED, out cloaked, sizeof(int));
+            }
+            var rect = default(RECT);
+            if (isWindow) GetWindowRect(_hwnd, out rect);
+            long memMB = 0;
+            try { memMB = Process.GetCurrentProcess().WorkingSet64 / 1024 / 1024; } catch { }
+            Logger.Info($"Heartbeat: window={isWindow} visible={isVisible} cloaked=0x{cloaked:X} parent=0x{currentParent:X} taskbar=0x{taskbar:X} rect=({rect.Left},{rect.Top},{rect.Right},{rect.Bottom}) memMB={memMB}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"EmitHeartbeat failed: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private nint WndProc(nint hWnd, uint msg, nint wParam, nint lParam)

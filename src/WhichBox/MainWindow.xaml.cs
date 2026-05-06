@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -80,6 +81,7 @@ public sealed partial class MainWindow : Window
             {
                 e.Handled = true;
                 GetCursorPos(out var pt);
+                Logger.Info($"RightTapped at cursor=({pt.X},{pt.Y}){Environment.NewLine}{CaptureClickDiagnostics(pt)}");
                 SafeEnqueue("HandleContextMenu", () => HandleContextMenu(pt.X, pt.Y));
             }
             catch (Exception ex)
@@ -212,6 +214,77 @@ public sealed partial class MainWindow : Window
 
         Logger.Info("SelfRestart: exiting now");
         Environment.Exit(0);
+    }
+
+    /// <summary>
+    /// Captures a snapshot of cursor / window / monitor / DPI state at the
+    /// moment of a right-click. Used to diagnose why the context menu
+    /// sometimes appears on a different monitor than the indicator.
+    /// </summary>
+    internal string CaptureClickDiagnostics(POINT cursor)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            var dpiCtx = GetThreadDpiAwarenessContext();
+            sb.AppendLine($"  thread DPI context : {DpiContextName(dpiCtx)} (raw=0x{dpiCtx:X})");
+            sb.AppendLine($"  system DPI         : {GetDpiForSystem()}");
+            sb.AppendLine($"  WhichBox HWND DPI  : {GetDpiForWindow(_hwnd)}");
+
+            if (GetWindowRect(_hwnd, out var winRect))
+            {
+                sb.AppendLine($"  WhichBox HWND rect : ({winRect.Left},{winRect.Top},{winRect.Right},{winRect.Bottom}) size={winRect.Right - winRect.Left}x{winRect.Bottom - winRect.Top}");
+            }
+
+            sb.AppendLine($"  cursor             : ({cursor.X},{cursor.Y})");
+
+            AppendMonitorInfo(sb, "cursor monitor    ", MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST));
+            AppendMonitorInfo(sb, "WhichBox monitor  ", MonitorFromWindow(_hwnd, MONITOR_DEFAULTTONEAREST));
+
+            var taskbar = FindWindowW("Shell_TrayWnd", null);
+            if (taskbar != 0)
+            {
+                if (GetWindowRect(taskbar, out var tbRect))
+                {
+                    sb.AppendLine($"  taskbar HWND rect  : ({tbRect.Left},{tbRect.Top},{tbRect.Right},{tbRect.Bottom})");
+                }
+                AppendMonitorInfo(sb, "taskbar monitor   ", MonitorFromWindow(taskbar, MONITOR_DEFAULTTONEAREST));
+            }
+
+            var menuOwner = _contextMenu.OwnerHwnd;
+            if (menuOwner != 0)
+            {
+                if (GetWindowRect(menuOwner, out var mownerRect))
+                {
+                    sb.AppendLine($"  menu owner rect    : ({mownerRect.Left},{mownerRect.Top},{mownerRect.Right},{mownerRect.Bottom})");
+                }
+                AppendMonitorInfo(sb, "menu owner monitor", MonitorFromWindow(menuOwner, MONITOR_DEFAULTTONEAREST));
+            }
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"  (CaptureClickDiagnostics failed: {ex.Message})");
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    private static void AppendMonitorInfo(StringBuilder sb, string label, nint hMonitor)
+    {
+        if (hMonitor == 0)
+        {
+            sb.AppendLine($"  {label} : null");
+            return;
+        }
+        var info = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+        if (GetMonitorInfoW(hMonitor, ref info))
+        {
+            var primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0 ? " PRIMARY" : "";
+            sb.AppendLine($"  {label} : hMon=0x{hMonitor:X}{primary} rcMon=({info.rcMonitor.Left},{info.rcMonitor.Top},{info.rcMonitor.Right},{info.rcMonitor.Bottom}) rcWork=({info.rcWork.Left},{info.rcWork.Top},{info.rcWork.Right},{info.rcWork.Bottom})");
+        }
+        else
+        {
+            sb.AppendLine($"  {label} : hMon=0x{hMonitor:X} (GetMonitorInfo failed)");
+        }
     }
 
     /// <summary>
@@ -553,6 +626,10 @@ public sealed partial class MainWindow : Window
             case MenuAction.OpenLogFolder:
                 Logger.Info("OpenLogFolder: user requested log folder");
                 Logger.OpenLogFolder();
+                break;
+            case MenuAction.LogDiagnostics:
+                GetCursorPos(out var diagPt);
+                Logger.Info($"LogDiagnostics: user requested diagnostics dump (cursor=({diagPt.X},{diagPt.Y})){Environment.NewLine}{CaptureClickDiagnostics(diagPt)}");
                 break;
             case MenuAction.CheckForUpdates:
                 _ = _updateChecker.CheckAsync();

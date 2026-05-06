@@ -241,6 +241,56 @@ internal static partial class NativeMethods
     [LibraryImport("dwmapi.dll")]
     internal static partial int DwmGetWindowAttribute(nint hwnd, uint dwAttribute, out int pvAttribute, uint cbAttribute);
 
+    // ====== DPI awareness + monitor info diagnostics ======
+    [LibraryImport("user32.dll")]
+    internal static partial nint GetThreadDpiAwarenessContext();
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool AreDpiAwarenessContextsEqual(nint dpiContextA, nint dpiContextB);
+
+    [LibraryImport("user32.dll")]
+    internal static partial uint GetDpiForSystem();
+
+    [LibraryImport("user32.dll")]
+    internal static partial nint MonitorFromPoint(POINT pt, uint dwFlags);
+
+    [LibraryImport("user32.dll")]
+    internal static partial nint MonitorFromWindow(nint hwnd, uint dwFlags);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GetMonitorInfoW(nint hMonitor, ref MONITORINFO lpmi);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MONITORINFO
+    {
+        public uint cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    internal const uint MONITORINFOF_PRIMARY = 1;
+    internal const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    // Well-known DPI awareness context pseudo-handles
+    internal static readonly nint DPI_AWARENESS_CONTEXT_UNAWARE = -1;
+    internal static readonly nint DPI_AWARENESS_CONTEXT_SYSTEM_AWARE = -2;
+    internal static readonly nint DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE = -3;
+    internal static readonly nint DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED = -5;
+
+    internal static string DpiContextName(nint ctx)
+    {
+        if (ctx == 0) return "0";
+        if (AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) return "PER_MONITOR_AWARE_V2";
+        if (AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE)) return "PER_MONITOR_AWARE";
+        if (AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_SYSTEM_AWARE)) return "SYSTEM_AWARE";
+        if (AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_UNAWARE)) return "UNAWARE";
+        if (AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED)) return "UNAWARE_GDISCALED";
+        return $"0x{ctx:X}";
+    }
+
     // Window style constants
     internal const int GWL_STYLE = -16;
     internal const int GWLP_WNDPROC = -4;

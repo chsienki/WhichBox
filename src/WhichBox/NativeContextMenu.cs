@@ -59,6 +59,7 @@ internal sealed class NativeContextMenu
             uint startupId = nextId++;
             uint reattachId = nextId++;
             uint openLogId = nextId++;
+            uint logDiagId = nextId++;
             uint checkUpdateId = nextId++;
             uint updateId = nextId++;
             uint exitId = nextId++;
@@ -67,6 +68,7 @@ internal sealed class NativeContextMenu
             AppendMenuW(hMenu, MF_STRING | (startupChecked ? MF_CHECKED : 0), startupId, "Run at Startup");
             AppendMenuW(hMenu, MF_STRING, reattachId, "Re-attach to Taskbar");
             AppendMenuW(hMenu, MF_STRING, openLogId, "Open Log Folder");
+            AppendMenuW(hMenu, MF_STRING, logDiagId, "Log Diagnostics");
 
             AppendMenuW(hMenu, MF_SEPARATOR, 0, null);
             if (updateVersion is not null)
@@ -82,6 +84,43 @@ internal sealed class NativeContextMenu
             AppendMenuW(hMenu, MF_STRING, exitId, "Exit");
 
             SetForegroundWindow(_menuOwner);
+
+            // Background capture: TrackPopupMenuEx blocks until the menu
+            // closes, so spawn a task to query the menu HWND's actual
+            // position 100ms in. Lets us correlate the (x,y) we asked for
+            // with where the menu actually landed.
+            Logger.Info($"NativeContextMenu.Show: invoking TrackPopupMenuEx at screen ({x},{y}) with TPM_BOTTOMALIGN | TPM_RIGHTALIGN");
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(100);
+                    var menuHwnd = FindWindowW("#32768", null);
+                    if (menuHwnd != 0 && GetWindowRect(menuHwnd, out var menuRect))
+                    {
+                        var monMenu = MonitorFromWindow(menuHwnd, MONITOR_DEFAULTTONEAREST);
+                        var monInfo = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+                        var primary = "";
+                        if (GetMonitorInfoW(monMenu, ref monInfo))
+                        {
+                            primary = (monInfo.dwFlags & MONITORINFOF_PRIMARY) != 0 ? " PRIMARY" : "";
+                            Logger.Info($"NativeContextMenu: actual menu HWND=0x{menuHwnd:X} rect=({menuRect.Left},{menuRect.Top},{menuRect.Right},{menuRect.Bottom}) on monitor=0x{monMenu:X}{primary} rcMon=({monInfo.rcMonitor.Left},{monInfo.rcMonitor.Top},{monInfo.rcMonitor.Right},{monInfo.rcMonitor.Bottom})");
+                        }
+                        else
+                        {
+                            Logger.Info($"NativeContextMenu: actual menu HWND=0x{menuHwnd:X} rect=({menuRect.Left},{menuRect.Top},{menuRect.Right},{menuRect.Bottom}) (GetMonitorInfo failed)");
+                        }
+                    }
+                    else
+                    {
+                        Logger.Warn("NativeContextMenu: could not find #32768 menu window 100ms after Show");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"NativeContextMenu menu-position capture failed: {ex.GetType().Name}: {ex.Message}");
+                }
+            });
 
             int cmd = TrackPopupMenuEx(hMenu,
                 TPM_RETURNCMD | TPM_BOTTOMALIGN | TPM_RIGHTALIGN,
@@ -100,6 +139,8 @@ internal sealed class NativeContextMenu
                 return new MenuResult(MenuAction.ReattachToTaskbar);
             else if (cmd == (int)openLogId)
                 return new MenuResult(MenuAction.OpenLogFolder);
+            else if (cmd == (int)logDiagId)
+                return new MenuResult(MenuAction.LogDiagnostics);
             else if (cmd == (int)checkUpdateId)
                 return new MenuResult(MenuAction.CheckForUpdates);
             else if (cmd == (int)updateId)
@@ -193,7 +234,7 @@ internal sealed class NativeContextMenu
     }
 }
 
-internal enum MenuAction { None, SelectColor, ResetColor, ToggleStartup, ReattachToTaskbar, OpenLogFolder, CheckForUpdates, Update, Exit }
+internal enum MenuAction { None, SelectColor, ResetColor, ToggleStartup, ReattachToTaskbar, OpenLogFolder, LogDiagnostics, CheckForUpdates, Update, Exit }
 
 internal readonly record struct MenuResult(MenuAction Action, Windows.UI.Color? Color = null)
 {

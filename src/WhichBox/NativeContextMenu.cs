@@ -22,17 +22,33 @@ internal sealed class NativeContextMenu
 
     public NativeContextMenu()
     {
-        // Create a hidden but real top-level window to own popup menus.
-        // HWND_MESSAGE windows can't own popups reliably (especially over RDP).
-        var hInstance = GetModuleHandleW(0);
-        _menuOwner = CreateWindowExW(0, "Static", "WhichBoxMenuOwner",
-            WS_OVERLAPPED,
-            -100, -100, 1, 1, 0, 0, hInstance, 0);
+        // Force PER_MONITOR_AWARE_V2 for the owner window's DPI awareness.
+        // WinUI's dispatcher sometimes runs in DPI-UNAWARE context (observed
+        // via "Log Diagnostics" output: thread DPI context = UNAWARE inside
+        // a SafeEnqueue callback). If the owner is DPI-UNAWARE, TrackPopupMenuEx
+        // interprets the screen coordinates we pass it as logical pixels and
+        // multiplies by the system DPI scale -- placing the menu on the wrong
+        // monitor at higher DPI. Creating the owner under PMv2 ensures
+        // coordinates are interpreted as physical pixels.
+        var prevCtx = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        try
+        {
+            // Create a hidden but real top-level window to own popup menus.
+            // HWND_MESSAGE windows can't own popups reliably (especially over RDP).
+            var hInstance = GetModuleHandleW(0);
+            _menuOwner = CreateWindowExW(0, "Static", "WhichBoxMenuOwner",
+                WS_OVERLAPPED,
+                -100, -100, 1, 1, 0, 0, hInstance, 0);
 
-        // Subclass the menu owner to handle WM_MEASUREITEM / WM_DRAWITEM
-        _wndProcDelegate = MenuOwnerWndProc;
-        _prevWndProc = SetWindowLongPtrW(_menuOwner, GWLP_WNDPROC,
-            Marshal.GetFunctionPointerForDelegate(_wndProcDelegate));
+            // Subclass the menu owner to handle WM_MEASUREITEM / WM_DRAWITEM
+            _wndProcDelegate = MenuOwnerWndProc;
+            _prevWndProc = SetWindowLongPtrW(_menuOwner, GWLP_WNDPROC,
+                Marshal.GetFunctionPointerForDelegate(_wndProcDelegate));
+        }
+        finally
+        {
+            SetThreadDpiAwarenessContext(prevCtx);
+        }
     }
 
     /// <summary>
@@ -122,9 +138,22 @@ internal sealed class NativeContextMenu
                 }
             });
 
-            int cmd = TrackPopupMenuEx(hMenu,
-                TPM_RETURNCMD | TPM_BOTTOMALIGN | TPM_RIGHTALIGN,
-                x, y, _menuOwner, 0);
+            // Belt-and-braces: also force PMv2 on the calling thread so any
+            // TrackPopupMenuEx coordinate-interpretation path that consults
+            // the thread's DPI context (rather than the owner's) treats our
+            // (x,y) as physical pixels.
+            var prevTrackCtx = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            int cmd;
+            try
+            {
+                cmd = TrackPopupMenuEx(hMenu,
+                    TPM_RETURNCMD | TPM_BOTTOMALIGN | TPM_RIGHTALIGN,
+                    x, y, _menuOwner, 0);
+            }
+            finally
+            {
+                SetThreadDpiAwarenessContext(prevTrackCtx);
+            }
 
             // KB Q135788: post WM_NULL after TrackPopupMenu to ensure menu dismisses
             PostMessageW(_menuOwner, 0 /*WM_NULL*/, 0, 0);

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 
@@ -11,6 +12,31 @@ internal static class Program
         // Banner first so we always know the process started, even if the
         // very next call dies before any exception can be caught.
         Logger.LogStartupBanner();
+
+        // Self-restart handshake: if launched with --wait-for-pid <PID>,
+        // wait for the previous instance to fully exit before initializing.
+        // Used by SelfRestart on session change to avoid the new and old
+        // processes racing for shared WinUI/COM endpoints.
+        if (args.Length >= 2 && args[0] == "--wait-for-pid" && int.TryParse(args[1], out var prevPid))
+        {
+            try
+            {
+                var prev = Process.GetProcessById(prevPid);
+                Logger.Info($"--wait-for-pid: waiting for previous instance PID={prevPid} to exit (timeout 10s)...");
+                if (prev.WaitForExit(10000))
+                    Logger.Info($"--wait-for-pid: previous instance PID={prevPid} exited");
+                else
+                    Logger.Warn($"--wait-for-pid: previous instance PID={prevPid} did not exit within 10s, proceeding anyway");
+            }
+            catch (ArgumentException)
+            {
+                Logger.Info($"--wait-for-pid: previous instance PID={prevPid} already gone");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"--wait-for-pid failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
 
         // Install the native unhandled-exception filter as early as possible
         // so we can capture a minidump for crashes during WinUI startup.
@@ -52,4 +78,5 @@ internal static class Program
         }
     }
 }
+
 

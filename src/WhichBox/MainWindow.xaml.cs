@@ -22,6 +22,7 @@ public sealed partial class MainWindow : Window
     private nint _prevWndProc;
     private WndProcDelegate? _wndProcDelegate; // prevent GC
     private bool _parentedToTaskbar;
+    private bool _restarting;
     private int _heartbeatTickCounter;
 
     public MainWindow()
@@ -167,6 +168,53 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Spawns a fresh WhichBox.exe with --wait-for-pid pointing at our
+    /// own process ID, then exits immediately. The new process waits for
+    /// us to die before initializing, ensuring no race on shared
+    /// WindowsAppRuntime / COM endpoints.
+    ///
+    /// Used as the only viable mitigation for the WinUI 3
+    /// DesktopChildSiteBridge fail-fast that fires shortly after every
+    /// RDP/console session transition. The bridge corruption can't be
+    /// avoided in-process, so we sidestep it by being a different
+    /// process by the time the next system-pumped message arrives.
+    /// </summary>
+    private void SelfRestart(string reason)
+    {
+        if (_restarting) return;
+        _restarting = true;
+
+        var exe = Environment.ProcessPath;
+        if (exe is null)
+        {
+            Logger.Warn("SelfRestart: Environment.ProcessPath is null, cannot restart");
+            _restarting = false;
+            return;
+        }
+
+        Logger.Info($"SelfRestart ({reason}): spawning new instance and exiting (current PID={Environment.ProcessId})");
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = exe,
+                Arguments = $"--wait-for-pid {Environment.ProcessId}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"SelfRestart: spawn failed: {ex.GetType().Name}: {ex.Message}");
+            _restarting = false;
+            return;
+        }
+
+        Logger.Info("SelfRestart: exiting now");
+        Environment.Exit(0);
+    }
+
+    /// <summary>
     /// Posts an action onto the dispatcher queue and ensures any exception is
     /// logged. Without this wrapper, exceptions in posted callbacks bypass
     /// every handler we registered (TaskScheduler, AppDomain, Application)
@@ -230,22 +278,14 @@ public sealed partial class MainWindow : Window
                 Logger.Info($"WndProc: WM_WTSSESSION_CHANGE reason={WtsReasonName(reason)} sessionId=0x{lParam:X}");
                 if (reason == WTS_CONSOLE_CONNECT || reason == WTS_REMOTE_CONNECT || reason == WTS_SESSION_UNLOCK)
                 {
-                    // Session switched (e.g., RDP to physical console or vice versa).
-                    // The taskbar HWND may have changed, so re-parent after a short delay
-                    // to let the shell finish setting up.
-                    _parentedToTaskbar = false;
-                    DispatcherQueue.TryEnqueue(async () =>
-                    {
-                        try
-                        {
-                            await Task.Delay(1000);
-                            MoveToTaskbar();
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Crash("WndProc.SessionChangeReparent", ex);
-                        }
-                    });
+                    // Diagnosed via WER dump (0xC0000409 / FAST_FAIL_FATAL_APP_EXIT
+                    // at Microsoft_UI_Input!DesktopChildSiteBridge::WndProc+0xfb):
+                    // the WinUI 3 child-site bridge is corrupted by the session
+                    // transition itself, not by anything we do to the HWND.
+                    // It fails-fast on the next system-pumped message regardless
+                    // of whether we touch the window. The only reliable mitigation
+                    // is to spawn a fresh process with a clean bridge and exit.
+                    SafeEnqueue("WndProc.SessionChangeRestart", () => SelfRestart($"session change ({WtsReasonName(reason)})"));
                 }
             }
             else if (_taskbarCreatedMsg != 0 && msg == _taskbarCreatedMsg)
@@ -445,6 +485,18 @@ public sealed partial class MainWindow : Window
         else
         {
             xPos = taskbarWidth - actualWidth - (int)(4 * scale);
+        }
+
+        // Defensive clamp: in some multi-monitor / RDP layouts TrayNotifyWnd
+        // reports negative-coord rects relative to the taskbar (observed:
+        // xPos=-709 placing the indicator off-screen left). Fall back to
+        // the right-edge position if the calculated x is outside the
+        // taskbar's visible bounds.
+        var maxX = taskbarWidth - actualWidth - (int)(4 * scale);
+        if (xPos < 0 || xPos > maxX)
+        {
+            Logger.Warn($"PositionInTaskbar: xPos={xPos} outside taskbar (width={taskbarWidth}); clamping to {maxX}");
+            xPos = Math.Max(0, maxX);
         }
 
         // Second pass: position using the actual measured width.

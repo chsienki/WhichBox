@@ -281,6 +281,14 @@ public sealed partial class MainWindow : Window
     /// Parents this window to the taskbar, using the Deskband11 technique:
     /// change style to WS_CHILD, SetParent onto Shell_TrayWnd, position
     /// to the left of TrayNotifyWnd.
+    ///
+    /// Idempotent: if the window is already correctly parented and styled
+    /// (which is the common case after an RDP/console session switch
+    /// because Explorer keeps the same Shell_TrayWnd HWND across sessions)
+    /// the SetParent and SetWindowLongW calls are skipped. This avoids
+    /// poking Microsoft.UI.Input.dll's per-HWND state during the input
+    /// subsystem's session-transition window, which has been observed to
+    /// trip __fastfail(FAST_FAIL_FATAL_APP_EXIT) inside the WindowsAppRuntime.
     /// </summary>
     private void MoveToTaskbar()
     {
@@ -294,22 +302,41 @@ public sealed partial class MainWindow : Window
 
         if (!_parentedToTaskbar)
         {
-            // Change style: remove WS_POPUP and all chrome bits, add WS_CHILD
-            var style = GetWindowLongW(_hwnd, GWL_STYLE);
-            var newStyle = (style & ~(WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) | WS_CHILD;
-            SetWindowLongW(_hwnd, GWL_STYLE, newStyle);
-            Logger.Info($"MoveToTaskbar: style 0x{style:X} -> 0x{newStyle:X}");
+            var currentStyle = GetWindowLongW(_hwnd, GWL_STYLE);
+            var currentParent = GetParent(_hwnd);
+            var desiredStyle = (currentStyle & ~(WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) | WS_CHILD;
 
-            var prevParent = SetParent(_hwnd, taskbar);
-            var setParentErr = Marshal.GetLastPInvokeError();
-            var newParent = GetParent(_hwnd);
-            Logger.Info($"MoveToTaskbar: SetParent returned prev=0x{prevParent:X} (Win32 err={setParentErr}), GetParent now=0x{newParent:X} (expected 0x{taskbar:X})");
+            bool styleNeedsChange = currentStyle != desiredStyle;
+            bool parentNeedsChange = currentParent != taskbar;
 
-            if (newParent != taskbar)
+            if (styleNeedsChange)
             {
-                Logger.Warn("MoveToTaskbar: SetParent FAILED -- not setting _parentedToTaskbar flag");
-                return;
+                SetWindowLongW(_hwnd, GWL_STYLE, desiredStyle);
+                Logger.Info($"MoveToTaskbar: style 0x{currentStyle:X} -> 0x{desiredStyle:X}");
             }
+            else
+            {
+                Logger.Info($"MoveToTaskbar: style already 0x{currentStyle:X}, skipping SetWindowLongW");
+            }
+
+            if (parentNeedsChange)
+            {
+                var prevParent = SetParent(_hwnd, taskbar);
+                var setParentErr = Marshal.GetLastPInvokeError();
+                var newParent = GetParent(_hwnd);
+                Logger.Info($"MoveToTaskbar: SetParent prev=0x{prevParent:X} (Win32 err={setParentErr}), now=0x{newParent:X} (expected 0x{taskbar:X})");
+
+                if (newParent != taskbar)
+                {
+                    Logger.Warn("MoveToTaskbar: SetParent FAILED -- not setting _parentedToTaskbar flag");
+                    return;
+                }
+            }
+            else
+            {
+                Logger.Info($"MoveToTaskbar: parent already 0x{taskbar:X}, skipping SetParent");
+            }
+
             _parentedToTaskbar = true;
         }
 

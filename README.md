@@ -36,6 +36,19 @@ Run the installer -- no admin rights required. It installs to `%LOCALAPPDATA%\Wh
 
 Use **Add or Remove Programs** in Windows Settings, or run the uninstaller from the Start Menu.
 
+## Diagnostics
+
+WhichBox writes a rolling log to `%LOCALAPPDATA%\WhichBox\whichbox.log` covering startup, taskbar parenting, RDP/console session changes, and a 60-second heartbeat. Right-click the indicator and choose **Open Log Folder** to view it. If the app dies due to an unhandled SEH exception, an in-process minidump is written to the `Dumps\` subfolder.
+
+For deeper crash diagnosis -- in particular for `__fastfail` paths inside the WindowsAppRuntime that bypass in-process exception handlers -- you can enable Windows Error Reporting LocalDumps:
+
+```powershell
+# One-time setup, self-elevates via UAC.
+.\scripts\Enable-WerLocalDumps.ps1
+```
+
+Subsequent crashes leave a full minidump in `%LOCALAPPDATA%\WhichBox\Dumps`, even for fail-fast paths the app cannot catch itself. Run with `-Disable` to remove.
+
 ## Building from Source
 
 Requires [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and Windows 10 19041+.

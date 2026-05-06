@@ -627,10 +627,6 @@ public sealed partial class MainWindow : Window
                 Logger.Info("OpenLogFolder: user requested log folder");
                 Logger.OpenLogFolder();
                 break;
-            case MenuAction.LogDiagnostics:
-                GetCursorPos(out var diagPt);
-                Logger.Info($"LogDiagnostics: user requested diagnostics dump (cursor=({diagPt.X},{diagPt.Y})){Environment.NewLine}{CaptureClickDiagnostics(diagPt)}");
-                break;
             case MenuAction.CheckForUpdates:
                 _ = _updateChecker.CheckAsync();
                 break;

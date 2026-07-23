@@ -12,6 +12,11 @@ namespace WhichBox;
 
 public sealed partial class MainWindow : Window
 {
+    // Extra width, in average character widths, added around the machine name
+    // so it always sits in consistent breathing room (box sized as if the name
+    // were this many characters longer).
+    private const int WidthPaddingChars = 10;
+
     private readonly nint _hwnd;
     private readonly AppWindow _appWindow;
     private readonly string _machineName = Environment.MachineName;
@@ -386,10 +391,12 @@ public sealed partial class MainWindow : Window
                 sb.AppendLine($"windowHeight   : {s.WindowHeight}");
                 sb.AppendLine($"logicalHeight  : {s.LogicalHeight:0.##}");
                 sb.AppendLine($"fontSize       : {s.FontSize:0.##}");
-                sb.AppendLine($"charWidth      : {s.CharWidth:0.##}");
                 sb.AppendLine($"horizontalPad  : {s.HorizontalPad:0.##}");
-                sb.AppendLine($"estimatedWidth : {s.EstimatedWidth}");
-                sb.AppendLine($"actualWidth    : {s.ActualWidth}{(s.ActualWidth > s.EstimatedWidth ? "  <-- WinUI min-width clamp" : "")}");
+                sb.AppendLine($"measuredTextDip: {s.MeasuredTextDip:0.##}");
+                sb.AppendLine($"paddedTextDip  : {s.PaddedTextDip:0.##} (+{WidthPaddingChars} chars)");
+                sb.AppendLine($"rasterScale    : {s.RasterScale:0.###}");
+                sb.AppendLine($"contentWidth   : {s.ContentWidth}");
+                sb.AppendLine($"actualWidth    : {s.ActualWidth}{(s.ActualWidth > s.ContentWidth ? "  <-- WinUI min-width clamp" : "")}");
                 sb.AppendLine($"trayNotify     : found={s.TrayNotifyFound} rect=({s.TrayNotifyRect.Left},{s.TrayNotifyRect.Top},{s.TrayNotifyRect.Right},{s.TrayNotifyRect.Bottom})");
                 sb.AppendLine($"anchorLeft     : {s.AnchorLeft}");
                 sb.AppendLine($"xPos           : {s.XPos} (maxX={s.MaxX})");
@@ -470,7 +477,7 @@ public sealed partial class MainWindow : Window
         DateTime TimestampUtc,
         RECT TaskbarRect, int TaskbarWidth, int TaskbarHeight, uint TaskbarDpi, double Scale,
         int VerticalInset, int WindowHeight, double LogicalHeight, double FontSize,
-        double CharWidth, double HorizontalPad, int EstimatedWidth, int ActualWidth,
+        double HorizontalPad, double MeasuredTextDip, double PaddedTextDip, double RasterScale, int ContentWidth, int ActualWidth,
         bool TrayNotifyFound, RECT TrayNotifyRect, int AnchorLeft, int XPos, int MaxX,
         RECT FinalRect);
 
@@ -701,26 +708,42 @@ public sealed partial class MainWindow : Window
         var verticalInset = (int)(4 * scale);
         var windowHeight = taskbarHeight - (verticalInset * 2);
 
-        // Scale font size to fit the taskbar height (in logical pixels for WinUI)
+        // Font size fits the taskbar height. Because the window renders at
+        // RasterizationScale 1.0 in the taskbar (see below), the monitor scale
+        // cancels out and fontSize reduces to windowHeight * 0.275 in physical
+        // px -- a consistent text-height-to-taskbar ratio at every DPI.
         var logicalHeight = windowHeight / scale;
-        // Font scales with taskbar height and DPI. At higher DPI the extra physical
-        // pixels let larger text look crisp; at 100% we match system tray text size.
         var fontSize = Math.Max(10, logicalHeight * 0.275 * scale);
-
-        // Width estimate based on dynamic font size (Segoe UI Bold ~0.75 em per char)
-        var charWidth = fontSize * 0.75;
         var horizontalPad = fontSize * 0.8;
-        var estimatedWidth = (int)((_machineName.Length * charWidth + horizontalPad * 2 + 4) * scale);
 
-        // Scale font and padding to match DPI so the colored area extends proportionally.
-        // Set directly (not via TryEnqueue) so WinUI layout updates before we measure.
+        // Apply font and padding directly (not via TryEnqueue) so layout
+        // updates before we measure.
         MachineNameText.FontSize = fontSize;
         LabelBorder.Padding = new Microsoft.UI.Xaml.Thickness(horizontalPad, 2, horizontalPad, 2);
         Root.UpdateLayout();
 
+        // Size the box to the text WinUI actually renders. Measure the natural
+        // text width in DIPs, then convert to physical pixels using the scale
+        // WinUI is really drawing at (XamlRoot.RasterizationScale). In the
+        // taskbar that scale is 1.0 because cross-process SetParent breaks DPI
+        // propagation, so the monitor scale must NOT be used here -- using it
+        // oversizes the box about 2x at 200% DPI.
+        MachineNameText.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var measuredTextDip = MachineNameText.DesiredSize.Width;
+
+        // Widen the box as if the name were WidthPaddingChars characters longer,
+        // giving every machine the same breathing room around its name. The
+        // extra is expressed in character widths (via this string's own average
+        // glyph width) so it stays proportional to the font at any taskbar size.
+        var avgCharDip = measuredTextDip / Math.Max(1, _machineName.Length);
+        var paddedTextDip = measuredTextDip + avgCharDip * WidthPaddingChars;
+
+        var rasterScale = Root.XamlRoot?.RasterizationScale ?? 1.0;
+        var contentWidth = (int)Math.Ceiling((paddedTextDip + horizontalPad * 2) * rasterScale) + (int)(4 * scale);
+
         // First pass: set size and a temporary position (far left) so the
         // window is created at the right height, then measure its actual width.
-        var firstPass = SetWindowPos(_hwnd, 0, 0, verticalInset, estimatedWidth, windowHeight,
+        var firstPass = SetWindowPos(_hwnd, 0, 0, verticalInset, contentWidth, windowHeight,
             SWP_NOACTIVATE | SWP_FRAMECHANGED);
         if (!firstPass)
         {
@@ -777,8 +800,9 @@ public sealed partial class MainWindow : Window
             TaskbarRect: taskbarRect, TaskbarWidth: taskbarWidth, TaskbarHeight: taskbarHeight,
             TaskbarDpi: taskbarDpi, Scale: scale,
             VerticalInset: verticalInset, WindowHeight: windowHeight, LogicalHeight: logicalHeight,
-            FontSize: fontSize, CharWidth: charWidth, HorizontalPad: horizontalPad,
-            EstimatedWidth: estimatedWidth, ActualWidth: actualWidth,
+            FontSize: fontSize, HorizontalPad: horizontalPad,
+            MeasuredTextDip: measuredTextDip, PaddedTextDip: paddedTextDip, RasterScale: rasterScale, ContentWidth: contentWidth,
+            ActualWidth: actualWidth,
             TrayNotifyFound: trayFound, TrayNotifyRect: trayRect, AnchorLeft: anchorLeft,
             XPos: xPos, MaxX: maxX, FinalRect: finalRect);
     }

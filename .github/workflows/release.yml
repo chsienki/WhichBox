@@ -12,7 +12,7 @@ jobs:
   validate-version:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate version consistency
         run: |
@@ -42,10 +42,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
           dotnet-quality: 'preview'
@@ -76,7 +76,7 @@ jobs:
           installer.iss
 
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: WhichBox-${{ matrix.arch }}-Setup
           path: installer-output/WhichBox-${{ matrix.arch }}-Setup.exe
@@ -86,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -95,7 +95,7 @@ jobs:
         run: echo "version=$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true

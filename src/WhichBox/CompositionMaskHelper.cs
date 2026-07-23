@@ -13,14 +13,15 @@ namespace WhichBox;
 /// </summary>
 internal sealed class CompositionMaskHelper
 {
-    // Vertical feather as a fraction of the box height. Fixed (not derived from
-    // a pixel distance) so the box keeps the same proportions at every taskbar
-    // height: a fixed-pixel fade is a small feather on a tall 200%-DPI taskbar
-    // but consumes a short 100%-DPI taskbar, leaving the text in the faded zone.
-    // 0.175 matches the proportion of the (good-looking) 200% render.
-    private const float VerticalFadeRatio = 0.175f;
+    // Feather distance for ALL edges, as a fraction of the box height. Keying
+    // the feather off height (a fixed pixel distance instead) keeps the same
+    // proportions at every taskbar height, and applying that one distance to
+    // every edge keeps the corners symmetric: a fixed-pixel fade is a small
+    // feather on a tall 200%-DPI taskbar but consumes a short 100%-DPI one, and
+    // a width-based horizontal fade makes the sides feather more than the top
+    // and bottom on a short box. 0.175 matches the (good-looking) 200% render.
+    private const float FeatherRatio = 0.175f;
 
-    private readonly float _fadePixels;
     private readonly Compositor _compositor;
     private readonly CompositionVisualSurface _contentSurface;
     private readonly CompositionVisualSurface _maskSurface;
@@ -36,8 +37,7 @@ internal sealed class CompositionMaskHelper
         ContainerVisual maskContainer,
         SpriteVisual maskedVisual,
         CompositionLinearGradientBrush hGradient,
-        CompositionLinearGradientBrush vGradient,
-        float fadePixels)
+        CompositionLinearGradientBrush vGradient)
     {
         _compositor = compositor;
         _contentSurface = contentSurface;
@@ -46,7 +46,6 @@ internal sealed class CompositionMaskHelper
         _maskedVisual = maskedVisual;
         _hGradient = hGradient;
         _vGradient = vGradient;
-        _fadePixels = fadePixels;
     }
 
     /// <summary>
@@ -58,13 +57,11 @@ internal sealed class CompositionMaskHelper
     /// <param name="contentSource">The element whose visual content is captured and masked.</param>
     /// <param name="contentContainer">The container to hide (must wrap contentSource so VisualSurface can still capture).</param>
     /// <param name="maskHost">The element that receives the masked output visual.</param>
-    /// <param name="fadePixels">The fade distance in logical pixels for all edges.</param>
     public static CompositionMaskHelper Apply(
         FrameworkElement root,
         FrameworkElement contentSource,
         FrameworkElement contentContainer,
-        FrameworkElement maskHost,
-        float fadePixels = 24f)
+        FrameworkElement maskHost)
     {
         var compositor = ElementCompositionPreview.GetElementVisual(root).Compositor;
         var contentVisual = ElementCompositionPreview.GetElementVisual(contentSource);
@@ -137,7 +134,7 @@ internal sealed class CompositionMaskHelper
 
         var helper = new CompositionMaskHelper(
             compositor, contentSurface, maskSurface, maskContainer,
-            maskedVisual, hGradient, vGradient, fadePixels);
+            maskedVisual, hGradient, vGradient);
 
         // Keep surface size in sync
         root.SizeChanged += (_, _) => helper.UpdateSize(root);
@@ -161,20 +158,23 @@ internal sealed class CompositionMaskHelper
         _maskSurface.SourceSize = size;
         _maskContainer.Size = size;
 
-        var hRatio = Math.Min(_fadePixels / w, 0.5f);
+        // Feather every edge by the same distance (a fraction of height) so the
+        // corners are symmetric and the box looks identical at every DPI. As a
+        // fraction of each axis that distance is featherPx/w horizontally and
+        // FeatherRatio vertically.
+        var featherPx = FeatherRatio * h;
+        var hRatio = Math.Min(featherPx / w, 0.5f);
         _hGradient.ColorStops[0].Offset = 0f;
         _hGradient.ColorStops[1].Offset = hRatio;
         _hGradient.ColorStops[2].Offset = 1f - hRatio;
         _hGradient.ColorStops[3].Offset = 1f;
 
-        // Vertical feather is height-proportional (see VerticalFadeRatio) so the
-        // box looks the same at every DPI, rather than a fixed pixel distance.
-        var vRatio = VerticalFadeRatio;
+        var vRatio = FeatherRatio;
         _vGradient.ColorStops[0].Offset = 0f;
         _vGradient.ColorStops[1].Offset = vRatio;
         _vGradient.ColorStops[2].Offset = 1f - vRatio;
         _vGradient.ColorStops[3].Offset = 1f;
 
-        Logger.Info($"MaskUpdateSize: w={w:0.#} h={h:0.#} fadePx={_fadePixels:0.#} hRatio={hRatio:0.###} vRatio={vRatio:0.###}");
+        Logger.Info($"MaskUpdateSize: w={w:0.#} h={h:0.#} featherPx={featherPx:0.#} hRatio={hRatio:0.###} vRatio={vRatio:0.###}");
     }
 }

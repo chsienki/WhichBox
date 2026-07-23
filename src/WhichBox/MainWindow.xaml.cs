@@ -106,12 +106,7 @@ public sealed partial class MainWindow : Window
             try
             {
                 Logger.Info("Root.Loaded fired");
-                // Scale fade distance by DPI so the gradient looks consistent across monitors.
-                // At 200% DPI, 24px fade on a ~124px-wide window ≈ 19% horizontal fade.
-                // At 100% DPI, 12px fade on a ~74px-wide window ≈ 16% horizontal fade.
-                var dpi = GetDpiForWindow(_hwnd);
-                var fadePx = 14f * (dpi / 96f);
-                CompositionMaskHelper.Apply(Root, LabelBorder, ContentHost, MaskHost, fadePixels: fadePx);
+                CompositionMaskHelper.Apply(Root, LabelBorder, ContentHost, MaskHost);
                 MoveToTaskbar();
 
                 // Check for updates in the background (fire and forget)

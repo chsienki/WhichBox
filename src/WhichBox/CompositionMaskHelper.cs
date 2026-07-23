@@ -13,6 +13,13 @@ namespace WhichBox;
 /// </summary>
 internal sealed class CompositionMaskHelper
 {
+    // Vertical feather as a fraction of the box height. Fixed (not derived from
+    // a pixel distance) so the box keeps the same proportions at every taskbar
+    // height: a fixed-pixel fade is a small feather on a tall 200%-DPI taskbar
+    // but consumes a short 100%-DPI taskbar, leaving the text in the faded zone.
+    // 0.175 matches the proportion of the (good-looking) 200% render.
+    private const float VerticalFadeRatio = 0.175f;
+
     private readonly float _fadePixels;
     private readonly Compositor _compositor;
     private readonly CompositionVisualSurface _contentSurface;
@@ -160,10 +167,14 @@ internal sealed class CompositionMaskHelper
         _hGradient.ColorStops[2].Offset = 1f - hRatio;
         _hGradient.ColorStops[3].Offset = 1f;
 
-        var vRatio = Math.Min(_fadePixels / h, 0.5f);
+        // Vertical feather is height-proportional (see VerticalFadeRatio) so the
+        // box looks the same at every DPI, rather than a fixed pixel distance.
+        var vRatio = VerticalFadeRatio;
         _vGradient.ColorStops[0].Offset = 0f;
         _vGradient.ColorStops[1].Offset = vRatio;
         _vGradient.ColorStops[2].Offset = 1f - vRatio;
         _vGradient.ColorStops[3].Offset = 1f;
+
+        Logger.Info($"MaskUpdateSize: w={w:0.#} h={h:0.#} fadePx={_fadePixels:0.#} hRatio={hRatio:0.###} vRatio={vRatio:0.###}");
     }
 }

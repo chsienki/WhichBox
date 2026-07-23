@@ -26,6 +26,11 @@ public sealed partial class MainWindow : Window
     private bool _restarting;
     private int _heartbeatTickCounter;
 
+    // Snapshot of the intermediate values from the most recent positioning
+    // pass, surfaced by the "Capture Diagnostics" menu item so sizing bugs
+    // across machines/DPIs can be reproduced from a single report.
+    private PositioningSnapshot? _lastPositioning;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -288,6 +293,188 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Builds a complete, self-contained sizing report: environment, every
+    /// monitor with its per-monitor DPI, taskbar geometry, live WinUI
+    /// measurements, and the exact intermediate values from the most recent
+    /// positioning pass. Designed to be pasted (with a screenshot) so sizing
+    /// bugs across machines and resolutions can be reproduced from the numbers.
+    /// </summary>
+    internal string BuildDiagnosticsReport()
+    {
+        var sb = new StringBuilder();
+        // Force PMv2 so every rect/DPI read below is in consistent physical
+        // pixels, matching what PositionInTaskbar uses.
+        var prevCtx = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        try
+        {
+            sb.AppendLine("===== WhichBox Sizing Diagnostics =====");
+            sb.AppendLine($"Captured      : {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
+            sb.AppendLine($"Version       : {Logger.Version}");
+            sb.AppendLine($"Machine       : {_machineName} (len={_machineName.Length})");
+            sb.AppendLine($"Arch          : {RuntimeInformation.ProcessArchitecture} (OS {RuntimeInformation.OSArchitecture})");
+            sb.AppendLine($"OS            : {RuntimeInformation.OSDescription}");
+            sb.AppendLine($"RemoteSession : {GetSystemMetrics(SM_REMOTESESSION) != 0}");
+            sb.AppendLine($"SESSIONNAME   : {Environment.GetEnvironmentVariable("SESSIONNAME")}");
+            sb.AppendLine();
+
+            var dpiCtx = GetThreadDpiAwarenessContext();
+            var hwndDpi = GetDpiForWindow(_hwnd);
+            sb.AppendLine("--- DPI / awareness ---");
+            sb.AppendLine($"thread DPI ctx : {DpiContextName(dpiCtx)}");
+            sb.AppendLine($"system DPI     : {GetDpiForSystem()}");
+            sb.AppendLine($"WhichBox HWND  : dpi={hwndDpi} scale={hwndDpi / 96.0:0.###}");
+            sb.AppendLine();
+
+            var monitors = GetAllMonitors();
+            sb.AppendLine($"--- Monitors ({monitors.Count}) ---");
+            for (int i = 0; i < monitors.Count; i++)
+            {
+                AppendMonitorLine(sb, i, monitors[i]);
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("--- Taskbar ---");
+            var taskbar = FindWindowW("Shell_TrayWnd", null);
+            if (taskbar != 0 && GetWindowRect(taskbar, out var tb))
+            {
+                var tbDpi = GetDpiForWindow(taskbar);
+                sb.AppendLine($"HWND=0x{taskbar:X} rect=({tb.Left},{tb.Top},{tb.Right},{tb.Bottom}) size={tb.Right - tb.Left}x{tb.Bottom - tb.Top} dpi={tbDpi} scale={tbDpi / 96.0:0.###}");
+                var tray = FindWindowExW(taskbar, 0, "TrayNotifyWnd", null);
+                if (tray != 0 && GetWindowRect(tray, out var trr))
+                {
+                    sb.AppendLine($"TrayNotifyWnd rect=({trr.Left},{trr.Top},{trr.Right},{trr.Bottom}) size={trr.Right - trr.Left}x{trr.Bottom - trr.Top}");
+                }
+                else
+                {
+                    sb.AppendLine("TrayNotifyWnd : not found");
+                }
+            }
+            else
+            {
+                sb.AppendLine("Shell_TrayWnd : not found");
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("--- WinUI live measurements ---");
+            try
+            {
+                if (Root.XamlRoot is { } xr)
+                {
+                    sb.AppendLine($"XamlRoot RasterizationScale : {xr.RasterizationScale:0.###}");
+                    sb.AppendLine($"XamlRoot Size (DIPs)        : {xr.Size.Width:0.#}x{xr.Size.Height:0.#}");
+                }
+                sb.AppendLine($"Root ActualSize        : {Root.ActualWidth:0.#}x{Root.ActualHeight:0.#}");
+                sb.AppendLine($"LabelBorder ActualSize : {LabelBorder.ActualWidth:0.#}x{LabelBorder.ActualHeight:0.#}");
+                sb.AppendLine($"Text ActualSize        : {MachineNameText.ActualWidth:0.#}x{MachineNameText.ActualHeight:0.#}");
+                sb.AppendLine($"Text DesiredSize       : {MachineNameText.DesiredSize.Width:0.#}x{MachineNameText.DesiredSize.Height:0.#}");
+                sb.AppendLine($"Text FontSize          : {MachineNameText.FontSize:0.##}");
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"(WinUI measurements failed: {ex.Message})");
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("--- Last positioning pass ---");
+            if (_lastPositioning is { } s)
+            {
+                var age = (DateTime.UtcNow - s.TimestampUtc).TotalSeconds;
+                sb.AppendLine($"age            : {age:0.#}s ago");
+                sb.AppendLine($"taskbar dpi    : {s.TaskbarDpi} scale={s.Scale:0.###}");
+                sb.AppendLine($"taskbar rect   : ({s.TaskbarRect.Left},{s.TaskbarRect.Top},{s.TaskbarRect.Right},{s.TaskbarRect.Bottom}) size={s.TaskbarWidth}x{s.TaskbarHeight}");
+                sb.AppendLine($"verticalInset  : {s.VerticalInset}");
+                sb.AppendLine($"windowHeight   : {s.WindowHeight}");
+                sb.AppendLine($"logicalHeight  : {s.LogicalHeight:0.##}");
+                sb.AppendLine($"fontSize       : {s.FontSize:0.##}");
+                sb.AppendLine($"charWidth      : {s.CharWidth:0.##}");
+                sb.AppendLine($"horizontalPad  : {s.HorizontalPad:0.##}");
+                sb.AppendLine($"estimatedWidth : {s.EstimatedWidth}");
+                sb.AppendLine($"actualWidth    : {s.ActualWidth}{(s.ActualWidth > s.EstimatedWidth ? "  <-- WinUI min-width clamp" : "")}");
+                sb.AppendLine($"trayNotify     : found={s.TrayNotifyFound} rect=({s.TrayNotifyRect.Left},{s.TrayNotifyRect.Top},{s.TrayNotifyRect.Right},{s.TrayNotifyRect.Bottom})");
+                sb.AppendLine($"anchorLeft     : {s.AnchorLeft}");
+                sb.AppendLine($"xPos           : {s.XPos} (maxX={s.MaxX})");
+                sb.AppendLine($"final rect     : ({s.FinalRect.Left},{s.FinalRect.Top},{s.FinalRect.Right},{s.FinalRect.Bottom}) size={s.FinalRect.Right - s.FinalRect.Left}x{s.FinalRect.Bottom - s.FinalRect.Top}");
+            }
+            else
+            {
+                sb.AppendLine("(no positioning pass recorded yet)");
+            }
+            sb.AppendLine("=======================================");
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"(BuildDiagnosticsReport failed: {ex.Message})");
+        }
+        finally
+        {
+            SetThreadDpiAwarenessContext(prevCtx);
+        }
+        return sb.ToString();
+    }
+
+    private static void AppendMonitorLine(StringBuilder sb, int index, nint hMon)
+    {
+        var info = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+        if (!GetMonitorInfoW(hMon, ref info))
+        {
+            sb.AppendLine($"[{index}] 0x{hMon:X} (GetMonitorInfo failed)");
+            return;
+        }
+        var primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0 ? "PRIMARY" : "       ";
+        uint effDpi = 0, rawDpi = 0;
+        GetDpiForMonitor(hMon, MDT_EFFECTIVE_DPI, out effDpi, out _);
+        GetDpiForMonitor(hMon, MDT_RAW_DPI, out rawDpi, out _);
+        var m = info.rcMonitor;
+        var w = info.rcWork;
+        sb.AppendLine($"[{index}] {primary} rcMon=({m.Left},{m.Top},{m.Right},{m.Bottom}) {m.Right - m.Left}x{m.Bottom - m.Top} rcWork=({w.Left},{w.Top},{w.Right},{w.Bottom}) effDpi={effDpi} rawDpi={rawDpi} scale={effDpi / 96.0:0.###}");
+    }
+
+    /// <summary>
+    /// Refreshes the positioning snapshot, builds the diagnostics report, then
+    /// saves it to diagnostics.txt, copies it to the clipboard, and opens the
+    /// folder. The file is written first so the data survives if the user then
+    /// copies a screenshot (which overwrites the clipboard).
+    /// </summary>
+    private void HandleCopyDiagnostics()
+    {
+        // Recompute position so the snapshot matches what's on screen right now.
+        try { RepositionInTaskbar(); }
+        catch (Exception ex) { Logger.Warn($"CopyDiagnostics: reposition failed: {ex.Message}"); }
+
+        var report = BuildDiagnosticsReport();
+
+        string? savedPath = null;
+        try
+        {
+            savedPath = Path.Combine(Logger.Folder, "diagnostics.txt");
+            File.WriteAllText(savedPath, report);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"CopyDiagnostics: save failed: {ex.Message}");
+        }
+
+        bool copied = false;
+        try { copied = TrySetClipboardText(_hwnd, report); }
+        catch (Exception ex) { Logger.Warn($"CopyDiagnostics: clipboard failed: {ex.Message}"); }
+
+        Logger.Info($"CopyDiagnostics: copied={copied} saved={savedPath}{Environment.NewLine}{report}");
+        Logger.OpenLogFolder();
+    }
+
+    /// <summary>
+    /// Immutable capture of the intermediate values computed during a single
+    /// PositionInTaskbar pass, for the diagnostics report.
+    /// </summary>
+    private readonly record struct PositioningSnapshot(
+        DateTime TimestampUtc,
+        RECT TaskbarRect, int TaskbarWidth, int TaskbarHeight, uint TaskbarDpi, double Scale,
+        int VerticalInset, int WindowHeight, double LogicalHeight, double FontSize,
+        double CharWidth, double HorizontalPad, int EstimatedWidth, int ActualWidth,
+        bool TrayNotifyFound, RECT TrayNotifyRect, int AnchorLeft, int XPos, int MaxX,
+        RECT FinalRect);
+
+    /// <summary>
     /// Posts an action onto the dispatcher queue and ensures any exception is
     /// logged. Without this wrapper, exceptions in posted callbacks bypass
     /// every handler we registered (TaskScheduler, AppDomain, Application)
@@ -509,7 +696,8 @@ public sealed partial class MainWindow : Window
         Logger.Info($"PositionInTaskbar: taskbarRect=({taskbarRect.Left},{taskbarRect.Top},{taskbarRect.Right},{taskbarRect.Bottom}) size={taskbarWidth}x{taskbarHeight}");
 
         // Inset vertically so the window doesn't fill the full taskbar height.
-        var scale = GetDpiForWindow(taskbar) / 96.0;
+        var taskbarDpi = GetDpiForWindow(taskbar);
+        var scale = taskbarDpi / 96.0;
         var verticalInset = (int)(4 * scale);
         var windowHeight = taskbarHeight - (verticalInset * 2);
 
@@ -549,10 +737,13 @@ public sealed partial class MainWindow : Window
 
         // Find the anchor point: TrayNotifyWnd left edge (includes the chevron).
         var trayNotify = FindWindowExW(taskbar, 0, "TrayNotifyWnd", null);
+        RECT trayRect = default;
+        bool trayFound = trayNotify != 0 && GetWindowRect(trayNotify, out trayRect);
+        int anchorLeft = 0;
         int xPos;
-        if (trayNotify != 0 && GetWindowRect(trayNotify, out var trayRect))
+        if (trayFound)
         {
-            var anchorLeft = trayRect.Left - taskbarRect.Left;
+            anchorLeft = trayRect.Left - taskbarRect.Left;
             xPos = anchorLeft - actualWidth - (int)(4 * scale);
         }
         else
@@ -578,10 +769,18 @@ public sealed partial class MainWindow : Window
         var setPosErr = ok ? 0 : Marshal.GetLastPInvokeError();
         Logger.Info($"PositionInTaskbar: final SetWindowPos x={xPos} y={verticalInset} w={actualWidth} h={windowHeight} ok={ok} err={setPosErr} parent=0x{GetParent(_hwnd):X}");
 
-        if (GetWindowRect(_hwnd, out var finalRect))
-        {
-            Logger.Info($"PositionInTaskbar: post-position GetWindowRect=({finalRect.Left},{finalRect.Top},{finalRect.Right},{finalRect.Bottom})");
-        }
+        GetWindowRect(_hwnd, out var finalRect);
+        Logger.Info($"PositionInTaskbar: post-position GetWindowRect=({finalRect.Left},{finalRect.Top},{finalRect.Right},{finalRect.Bottom})");
+
+        _lastPositioning = new PositioningSnapshot(
+            TimestampUtc: DateTime.UtcNow,
+            TaskbarRect: taskbarRect, TaskbarWidth: taskbarWidth, TaskbarHeight: taskbarHeight,
+            TaskbarDpi: taskbarDpi, Scale: scale,
+            VerticalInset: verticalInset, WindowHeight: windowHeight, LogicalHeight: logicalHeight,
+            FontSize: fontSize, CharWidth: charWidth, HorizontalPad: horizontalPad,
+            EstimatedWidth: estimatedWidth, ActualWidth: actualWidth,
+            TrayNotifyFound: trayFound, TrayNotifyRect: trayRect, AnchorLeft: anchorLeft,
+            XPos: xPos, MaxX: maxX, FinalRect: finalRect);
     }
 
     private void ApplyColor()
@@ -626,6 +825,10 @@ public sealed partial class MainWindow : Window
             case MenuAction.OpenLogFolder:
                 Logger.Info("OpenLogFolder: user requested log folder");
                 Logger.OpenLogFolder();
+                break;
+            case MenuAction.CaptureDiagnostics:
+                Logger.Info("CaptureDiagnostics: user requested sizing diagnostics");
+                HandleCopyDiagnostics();
                 break;
             case MenuAction.CheckForUpdates:
                 _ = _updateChecker.CheckAsync();

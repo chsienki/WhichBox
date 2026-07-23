@@ -26,6 +26,9 @@ internal static class Logger
     public static string Folder => _folder;
     public static string LogPath => _path;
 
+    /// <summary>The app's informational version, or "unknown".</summary>
+    public static string Version => GetVersion();
+
     static Logger()
     {
         _folder = Path.Combine(

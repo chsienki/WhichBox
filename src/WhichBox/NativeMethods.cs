@@ -291,6 +291,111 @@ internal static partial class NativeMethods
         return $"0x{ctx:X}";
     }
 
+    // ====== Monitor enumeration + per-monitor DPI (diagnostics) ======
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool EnumDisplayMonitors(nint hdc, nint lprcClip,
+        delegate* unmanaged<nint, nint, nint, nint, int> lpfnEnum, nint dwData);
+
+    [LibraryImport("shcore.dll")]
+    internal static partial int GetDpiForMonitor(nint hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    internal const int MDT_EFFECTIVE_DPI = 0;
+    internal const int MDT_RAW_DPI = 2;
+
+    private static readonly object s_monitorEnumLock = new();
+    private static readonly List<nint> s_monitorEnumResults = [];
+
+    [UnmanagedCallersOnly]
+    private static int CollectMonitorCallback(nint hMonitor, nint hdc, nint lprc, nint data)
+    {
+        // EnumDisplayMonitors invokes this synchronously on the calling thread,
+        // so the shared list is safe under s_monitorEnumLock held by the caller.
+        s_monitorEnumResults.Add(hMonitor);
+        return 1; // TRUE -> continue enumeration
+    }
+
+    /// <summary>
+    /// Returns handles to every display monitor in Z-order. Used only by the
+    /// diagnostics report, so a shared buffer under a lock is sufficient.
+    /// </summary>
+    internal static unsafe List<nint> GetAllMonitors()
+    {
+        lock (s_monitorEnumLock)
+        {
+            s_monitorEnumResults.Clear();
+            EnumDisplayMonitors(0, 0, &CollectMonitorCallback, 0);
+            return [.. s_monitorEnumResults];
+        }
+    }
+
+    // ====== Clipboard (diagnostics copy) ======
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool OpenClipboard(nint hWndNewOwner);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool EmptyClipboard();
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    internal static partial nint SetClipboardData(uint uFormat, nint hMem);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool CloseClipboard();
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    internal static partial nint GlobalAlloc(uint uFlags, nuint dwBytes);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    internal static partial nint GlobalLock(nint hMem);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GlobalUnlock(nint hMem);
+
+    internal const uint CF_UNICODETEXT = 13;
+    internal const uint GMEM_MOVEABLE = 0x0002;
+
+    /// <summary>
+    /// Places UTF-16 text on the clipboard via the Win32 clipboard API. Used
+    /// instead of the WinRT clipboard because that path is unreliable in
+    /// unpackaged apps. On success the system takes ownership of the global.
+    /// </summary>
+    internal static unsafe bool TrySetClipboardText(nint ownerHwnd, string text)
+    {
+        if (!OpenClipboard(ownerHwnd)) return false;
+        try
+        {
+            EmptyClipboard();
+            var bytes = (nuint)((text.Length + 1) * sizeof(char));
+            var hGlobal = GlobalAlloc(GMEM_MOVEABLE, bytes);
+            if (hGlobal == 0) return false;
+
+            var dst = GlobalLock(hGlobal);
+            if (dst == 0) return false;
+            try
+            {
+                fixed (char* src = text)
+                {
+                    Buffer.MemoryCopy(src, (void*)dst, (long)bytes, (long)(text.Length * sizeof(char)));
+                    ((char*)dst)[text.Length] = '\0';
+                }
+            }
+            finally
+            {
+                GlobalUnlock(hGlobal);
+            }
+
+            return SetClipboardData(CF_UNICODETEXT, hGlobal) != 0;
+        }
+        finally
+        {
+            CloseClipboard();
+        }
+    }
+
     // Window style constants
     internal const int GWL_STYLE = -16;
     internal const int GWLP_WNDPROC = -4;

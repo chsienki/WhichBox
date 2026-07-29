@@ -40,7 +40,7 @@ internal static class Program
 
         // Install the native unhandled-exception filter as early as possible
         // so we can capture a minidump for crashes during WinUI startup.
-        // Re-installed from MainWindow.ctor in case WinUI overrode us.
+        // Re-installed from TaskbarWindow.ctor in case WinUI overrode us.
         NativeCrashHandler.Install();
 
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>

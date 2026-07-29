@@ -7,6 +7,7 @@ A small Windows taskbar indicator that displays the current machine name. Helpfu
 ## Features
 
 - Sits directly in the taskbar, just left of the system tray
+- Multi-monitor aware: shows one indicator per taskbar, and spawns/removes them automatically as monitors come and go (docking, RDP, resolution changes)
 - Color-coded background with 12 muted pastel colors -- each machine gets a deterministic default based on its name
 - Right-click to pick a different color, toggle startup, or exit
 - Remembers your color choice across restarts

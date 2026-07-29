@@ -329,6 +329,34 @@ internal static partial class NativeMethods
         }
     }
 
+    // ====== Taskbar enumeration (multi-monitor) ======
+
+    internal const string ShellTrayClass = "Shell_TrayWnd";
+    internal const string ShellSecondaryTrayClass = "Shell_SecondaryTrayWnd";
+
+    /// <summary>
+    /// Returns the primary taskbar HWND (<c>Shell_TrayWnd</c>), or 0 if the
+    /// shell isn't currently presenting one (e.g., mid Explorer restart).
+    /// </summary>
+    internal static nint FindPrimaryTaskbar() => FindWindowW(ShellTrayClass, null);
+
+    /// <summary>
+    /// Returns the HWND of every secondary taskbar (<c>Shell_SecondaryTrayWnd</c>).
+    /// Windows creates one per additional monitor when "Show taskbar on all
+    /// displays" is enabled, and none otherwise. Passing a null parent to
+    /// FindWindowEx walks the top-level windows of that class.
+    /// </summary>
+    internal static List<nint> FindSecondaryTaskbars()
+    {
+        var result = new List<nint>();
+        nint prev = 0;
+        while ((prev = FindWindowExW(0, prev, ShellSecondaryTrayClass, null)) != 0)
+        {
+            result.Add(prev);
+        }
+        return result;
+    }
+
     // ====== Clipboard (diagnostics copy) ======
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

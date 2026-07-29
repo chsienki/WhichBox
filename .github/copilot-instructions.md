@@ -4,6 +4,8 @@
 
 WhichBox is a WinUI 3 (Windows App SDK) application that displays the computer name in the Windows taskbar. It parents itself directly into the taskbar using the Deskband11 technique (SetParent into Shell_TrayWnd). The app is unpackaged (no MSIX), uses NativeAOT publishing, and is designed to be a lightweight always-on indicator for VM/RDP users.
 
+On multi-monitor setups it shows one indicator per taskbar: the primary `Shell_TrayWnd` plus one `Shell_SecondaryTrayWnd` per additional monitor (when "show taskbar on all displays" is enabled). Windows are spawned and closed automatically as monitors and taskbars come and go (docking, RDP, resolution changes).
+
 ## Architecture & Key Decisions
 
 ### Why WinUI 3?
@@ -20,12 +22,23 @@ The app runs as an unpackaged WinUI 3 app:
 - `DISABLE_XAML_GENERATED_MAIN` defined, with a custom `Program.cs` that calls `ComWrappersSupport.InitializeComWrappers()` before `Application.Start()`
 - No MSIX packaging, no app identity
 
+### Multi-Monitor (TaskbarManager)
+
+`TaskbarManager` is the coordinator that owns one `TaskbarWindow` per taskbar and keeps that set in sync as monitors/taskbars change. `App.OnLaunched` creates the manager (not a window directly).
+
+- **Enumeration**: `NativeMethods.FindPrimaryTaskbar()` returns `Shell_TrayWnd`; `FindSecondaryTaskbars()` walks all `Shell_SecondaryTrayWnd` top-level windows (one per extra monitor).
+- **Reconcile loop**: a 3-second `DispatcherTimer` is the backbone. Each pass enumerates the live taskbars, creates a window for any new taskbar, closes the window for any taskbar that vanished, and repositions survivors whose taskbar moved/resized. The primary window forwards `WM_DISPLAYCHANGE`/`WM_DPICHANGED`/`TaskbarCreated` to the manager as a fast path so changes usually reflect immediately.
+- **Keying**: secondary windows are keyed by their `Shell_SecondaryTrayWnd` HWND. The primary window is tracked separately and never torn down by reconcile (Shell_TrayWnd effectively always exists); it re-resolves `Shell_TrayWnd` on every reposition to survive an Explorer restart.
+- **Shared state lives in the manager**: `Settings`, `UpdateChecker`, and the single `NativeContextMenu` are shared so all windows stay consistent (a colour picked on one monitor applies to all; the update dot shows on all). Right-click on any window calls back into `TaskbarManager.ShowContextMenu`.
+- **Only the primary window** subclasses its HWND and registers `WTSRegisterSessionNotification`; it forwards session changes to the manager. Secondary windows have no hooks -- they are pure parent+position+right-click objects driven entirely by reconcile.
+- **Exit** closes every window and calls `Application.Current.Exit()`. Session-change self-restart (the WinUI child-site bridge fail-fast mitigation) lives in the manager and relaunches the whole process.
+
 ### Taskbar Parenting (MoveToTaskbar)
 
-The Deskband11 technique:
+The Deskband11 technique, per `TaskbarWindow` (generalised to its assigned taskbar HWND -- `Shell_TrayWnd` for the primary window, a specific `Shell_SecondaryTrayWnd` for secondaries):
 1. Change window style: remove `WS_POPUP` and all chrome bits (`WS_CAPTION`, `WS_SYSMENU`, `WS_THICKFRAME`, `WS_MINIMIZEBOX`, `WS_MAXIMIZEBOX`), add `WS_CHILD`
-2. `SetParent(hwnd, Shell_TrayWnd)`
-3. Position to the left of `TrayNotifyWnd`
+2. `SetParent(hwnd, taskbar)`
+3. Position to the left of `TrayNotifyWnd` (secondary taskbars often have no `TrayNotifyWnd`, so positioning falls back to the taskbar's right edge)
 
 **DPI handling is critical**: After `SetParent`, the child window may inherit a different DPI awareness context, causing `GetWindowRect` to return logical (virtualized) coordinates on some machines but physical on others. The fix is to call `SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)` before any `GetWindowRect`/`SetWindowPos` calls in `PositionInTaskbar`, ensuring coordinates are always physical pixels. Hardcoded constants (vertical inset, per-character width estimates, gaps) must still be scaled by `GetDpiForWindow(taskbar) / 96.0` since they're defined in logical units. **Do NOT simply multiply all `GetWindowRect` results by the DPI scale factor** -- that double-scales on machines where the coords are already physical.
 
@@ -33,7 +46,7 @@ The Deskband11 technique:
 
 **Vertical inset**: 4 * scale pixels on top and bottom so the indicator doesn't fill the full taskbar height.
 
-**Resilience to DPI/display changes**: The main HWND is subclassed to catch `WM_DPICHANGED`, `WM_DISPLAYCHANGE`, and the registered `TaskbarCreated` shell message. On DPI/display changes, the window repositions within its current parent. On `TaskbarCreated` (explorer recreated the taskbar), it re-parents entirely. Positioning logic is split: `MoveToTaskbar()` handles initial parenting + position, `RepositionInTaskbar()` just recalculates position and verifies the parent is still valid.
+**Resilience to DPI/display changes**: The primary window's HWND is subclassed to catch `WM_DPICHANGED`, `WM_DISPLAYCHANGE`, and the registered `TaskbarCreated` shell message, all forwarded to `TaskbarManager` (display/DPI -> reconcile all; `TaskbarCreated` -> re-parent primary + rebuild secondaries). The manager's 3-second reconcile timer is the reliable backbone that also re-parents any drifted window (subsuming the old per-window health check). Per window, positioning logic is split: `MoveToTaskbar()` handles parenting + position, `RefreshPosition(force)` re-verifies the parent and repositions (only on geometry change unless forced), and `ForceReattach()` does a full re-parent.
 
 ### Transparency
 
@@ -109,8 +122,9 @@ WhichBox/
   installer.iss               # Inno Setup installer script
   src/WhichBox/
     Program.cs                # Custom Main (WinRT ComWrappersSupport init)
-    App.xaml(.cs)             # WinUI 3 Application boilerplate
-    MainWindow.xaml(.cs)      # Window setup, taskbar parenting, event wiring
+    App.xaml(.cs)             # WinUI 3 Application boilerplate; creates TaskbarManager
+    TaskbarManager.cs         # Coordinator: one window per taskbar, reconcile loop, shared state
+    TaskbarWindow.xaml(.cs)   # One indicator window: taskbar parenting, positioning, event wiring
     NativeMethods.cs          # All Win32 P/Invoke declarations and constants
     NativeContextMenu.cs      # Owner-drawn popup menu with color swatches
     CompositionMaskHelper.cs  # Composition opacity mask for feathered edges
@@ -128,10 +142,11 @@ WhichBox/
 | File | Purpose |
 |------|---------|
 | `Program.cs` | Custom Main entry point with WinRT ComWrappersSupport init |
-| `App.xaml(.cs)` | Standard WinUI 3 Application boilerplate |
-| `MainWindow.xaml(.cs)` | Window setup, taskbar parenting via MoveToTaskbar(), color application, event wiring |
-| `NativeMethods.cs` | All Win32 P/Invoke declarations, structs, constants. Use `using static WhichBox.NativeMethods;` |
-| `NativeContextMenu.cs` | Encapsulates popup menu creation, display, owner-drawn painting. Returns `MenuResult` |
+| `App.xaml(.cs)` | WinUI 3 Application boilerplate; `OnLaunched` creates and starts `TaskbarManager` |
+| `TaskbarManager.cs` | Coordinator: owns one `TaskbarWindow` per taskbar, the reconcile timer, and shared Settings/UpdateChecker/NativeContextMenu; handles spawn/close, context-menu actions, session-change self-restart, and exit |
+| `TaskbarWindow.xaml(.cs)` | One indicator window: taskbar parenting via MoveToTaskbar(), positioning, color application, event wiring (was `MainWindow`) |
+| `NativeMethods.cs` | All Win32 P/Invoke declarations, structs, constants, plus taskbar enumeration (`FindPrimaryTaskbar`/`FindSecondaryTaskbars`). Use `using static WhichBox.NativeMethods;` |
+| `NativeContextMenu.cs` | Encapsulates popup menu creation, display, owner-drawn painting. Returns `MenuResult`. A single shared instance (owned by `TaskbarManager`) serves all windows |
 | `CompositionMaskHelper.cs` | Static `Apply()` method sets up the composition opacity mask. Self-contained with size tracking |
 | `ColorPalette.cs` | 12 muted pastel colors, deterministic hash-based default, contrast foreground calculation |
 | `Settings.cs` | JSON persistence with `SettingsJsonContext` (source-generated for AOT). Stores chosen color |

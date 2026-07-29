@@ -11,7 +11,7 @@ namespace WhichBox;
 ///
 /// Best-effort only: this canNOT catch Environment.FailFast,
 /// RaiseFailFastException, TerminateProcess, or external kills. For those
-/// the heartbeat in MainWindow's HealthCheck timer is the diagnostic signal.
+/// the heartbeat in TaskbarManager's reconcile timer is the diagnostic signal.
 ///
 /// The crash filter itself runs in a potentially corrupt process. It must
 /// avoid managed allocations, locks, string formatting, and anything else
@@ -43,7 +43,7 @@ internal static unsafe class NativeCrashHandler
     /// setup but safe to call again to re-assert the filter if some other
     /// component overwrote it (SetUnhandledExceptionFilter is "last installer
     /// wins"). Recommended call sites: as early as possible in Program.Main
-    /// and again from MainWindow's constructor.
+    /// and again from a TaskbarWindow's constructor.
     /// </summary>
     public static void Install()
     {

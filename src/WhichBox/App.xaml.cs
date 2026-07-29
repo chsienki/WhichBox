@@ -4,7 +4,7 @@ namespace WhichBox;
 
 public partial class App : Application
 {
-    private MainWindow? _window;
+    private TaskbarManager? _manager;
 
     public App()
     {
@@ -25,8 +25,8 @@ public partial class App : Application
     {
         try
         {
-            _window = new MainWindow();
-            _window.Activate();
+            _manager = new TaskbarManager();
+            _manager.Start();
         }
         catch (Exception ex)
         {

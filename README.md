@@ -10,6 +10,7 @@ A small Windows taskbar indicator that displays the current machine name. Helpfu
 - Multi-monitor aware: shows one indicator per taskbar, and spawns/removes them automatically as monitors come and go (docking, RDP, resolution changes)
 - Color-coded background with 12 muted pastel colors -- each machine gets a deterministic default based on its name
 - Right-click to pick a different color, toggle startup, or exit
+- Gets out of the way on small screens: hides itself on taskbars too narrow to share, so the Start button stays clickable when you connect from a phone
 - Remembers your color choice across restarts
 - Automatic update checking via GitHub Releases
 - Single native executable with fast startup (NativeAOT)
@@ -30,6 +31,7 @@ Run the installer -- no admin rights required. It installs to `%LOCALAPPDATA%\Wh
   - Pick a color from the palette
   - Reset to the default color
   - Toggle **Run at Startup**
+  - Toggle **Hide on Small Screens** -- on by default; hides the indicator on taskbars narrower than 800 logical pixels (or when it would sit over the Start button), which is what you want when remoting in from a phone. Tune the threshold with `NarrowTaskbarWidth` in `%APPDATA%\WhichBox\settings.json`
   - **Update Available** (shown when a newer version is found)
   - Exit
 

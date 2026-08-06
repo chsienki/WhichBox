@@ -55,7 +55,7 @@ internal sealed class NativeContextMenu
     /// Shows the context menu at the given screen coordinates and returns
     /// the user's selection.
     /// </summary>
-    public MenuResult Show(int x, int y, bool startupChecked = false, string? updateVersion = null)
+    public MenuResult Show(int x, int y, bool startupChecked = false, string? updateVersion = null, bool hideOnNarrowChecked = true)
     {
         var hMenu = CreatePopupMenu();
         if (hMenu == 0) return MenuResult.None;
@@ -73,6 +73,7 @@ internal sealed class NativeContextMenu
             uint nextId = (uint)ColorPalette.Colors.Count + 1;
             uint resetId = nextId++;
             uint startupId = nextId++;
+            uint hideOnNarrowId = nextId++;
             uint reattachId = nextId++;
             uint openLogId = nextId++;
             uint captureDiagId = nextId++;
@@ -82,6 +83,7 @@ internal sealed class NativeContextMenu
 
             AppendMenuW(hMenu, MF_STRING, resetId, "Reset to Default");
             AppendMenuW(hMenu, MF_STRING | (startupChecked ? MF_CHECKED : 0), startupId, "Run at Startup");
+            AppendMenuW(hMenu, MF_STRING | (hideOnNarrowChecked ? MF_CHECKED : 0), hideOnNarrowId, "Hide on Small Screens");
             AppendMenuW(hMenu, MF_STRING, reattachId, "Re-attach to Taskbar");
             AppendMenuW(hMenu, MF_STRING, openLogId, "Open Log Folder");
             AppendMenuW(hMenu, MF_STRING, captureDiagId, "Capture Diagnostics");
@@ -164,6 +166,8 @@ internal sealed class NativeContextMenu
                 return new MenuResult(MenuAction.ResetColor);
             else if (cmd == (int)startupId)
                 return new MenuResult(MenuAction.ToggleStartup);
+            else if (cmd == (int)hideOnNarrowId)
+                return new MenuResult(MenuAction.ToggleHideOnNarrow);
             else if (cmd == (int)reattachId)
                 return new MenuResult(MenuAction.ReattachToTaskbar);
             else if (cmd == (int)openLogId)
@@ -263,7 +267,7 @@ internal sealed class NativeContextMenu
     }
 }
 
-internal enum MenuAction { None, SelectColor, ResetColor, ToggleStartup, ReattachToTaskbar, OpenLogFolder, CaptureDiagnostics, CheckForUpdates, Update, Exit }
+internal enum MenuAction { None, SelectColor, ResetColor, ToggleStartup, ToggleHideOnNarrow, ReattachToTaskbar, OpenLogFolder, CaptureDiagnostics, CheckForUpdates, Update, Exit }
 
 internal readonly record struct MenuResult(MenuAction Action, Windows.UI.Color? Color = null)
 {

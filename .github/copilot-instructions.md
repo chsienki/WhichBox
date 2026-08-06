@@ -46,6 +46,8 @@ The Deskband11 technique, per `TaskbarWindow` (generalised to its assigned taskb
 
 **Vertical inset**: 4 * scale pixels on top and bottom so the indicator doesn't fill the full taskbar height.
 
+**Auto-hide on small screens**: On a phone-sized taskbar (typically RDP from a phone) the indicator lands on top of the centred Start button and swallows its clicks. `ApplyAutoHide` in `TaskbarWindow` calls `ShowWindow(SW_HIDE)` when either test trips: the taskbar is narrower than `Settings.NarrowTaskbarWidth` (default 800 logical px, checked before any sizing work), or the positioned indicator reaches past the taskbar's midpoint (a self-scaling proxy for "covers Start"). The window stays parented, so it reappears via `SW_SHOWNOACTIVATE` as soon as the reconcile loop sees room again. Controlled by the "Hide on Small Screens" menu item (`Settings.HideOnNarrowTaskbar`, on by default); the threshold is settings.json-only. `ApplyAutoHide` compares against `IsWindowVisible` rather than its own flag, and `RefreshPosition` re-asserts a hidden window each tick, so a window WinUI puts back on screen is re-hidden.
+
 **Resilience to DPI/display changes**: The primary window's HWND is subclassed to catch `WM_DPICHANGED`, `WM_DISPLAYCHANGE`, and the registered `TaskbarCreated` shell message, all forwarded to `TaskbarManager` (display/DPI -> reconcile all; `TaskbarCreated` -> re-parent primary + rebuild secondaries). The manager's 3-second reconcile timer is the reliable backbone that also re-parents any drifted window (subsuming the old per-window health check). Per window, positioning logic is split: `MoveToTaskbar()` handles parenting + position, `RefreshPosition(force)` re-verifies the parent and repositions (only on geometry change unless forced), and `ForceReattach()` does a full re-parent.
 
 ### Transparency
@@ -149,7 +151,7 @@ WhichBox/
 | `NativeContextMenu.cs` | Encapsulates popup menu creation, display, owner-drawn painting. Returns `MenuResult`. A single shared instance (owned by `TaskbarManager`) serves all windows |
 | `CompositionMaskHelper.cs` | Static `Apply()` method sets up the composition opacity mask. Self-contained with size tracking |
 | `ColorPalette.cs` | 12 muted pastel colors, deterministic hash-based default, contrast foreground calculation |
-| `Settings.cs` | JSON persistence with `SettingsJsonContext` (source-generated for AOT). Stores chosen color |
+| `Settings.cs` | JSON persistence with `SettingsJsonContext` (source-generated for AOT). Stores chosen color and the small-screen auto-hide preference/threshold |
 | `StartupHelper.cs` | Static class: reads/writes HKCU Run registry for startup toggle |
 | `UpdateChecker.cs` | Checks GitHub releases API on startup, offers silent installer download |
 | `WhichBox.csproj` | Project config: AOT, unpackaged WinUI 3, `CopyXamlResourcesForAot` target, reads `VERSION` |

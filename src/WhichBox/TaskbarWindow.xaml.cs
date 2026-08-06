@@ -44,6 +44,12 @@ public sealed partial class TaskbarWindow : Window
     private RECT _lastTaskbarRect;
     private bool _hasLastTaskbarRect;
 
+    // Set while the indicator is hidden because its taskbar is too small to
+    // share (see ApplyAutoHide). Tracked so we only call ShowWindow on a real
+    // transition and so diagnostics can explain a missing indicator.
+    private bool _autoHidden;
+    private string? _autoHideReason;
+
     // Snapshot of the intermediate values from the most recent positioning
     // pass, surfaced by the "Capture Diagnostics" menu item so sizing bugs
     // across machines/DPIs can be reproduced from a single report.
@@ -323,6 +329,7 @@ public sealed partial class TaskbarWindow : Window
             sb.AppendLine();
 
             sb.AppendLine("--- Last positioning pass ---");
+            sb.AppendLine($"autoHide       : enabled={_settings.HideOnNarrowTaskbar} threshold={_settings.NarrowTaskbarWidth} logical px, hidden={_autoHidden}{(_autoHideReason is { } r ? $" ({r})" : "")}");
             if (_lastPositioning is { } s)
             {
                 var age = (DateTime.UtcNow - s.TimestampUtc).TotalSeconds;
@@ -480,7 +487,7 @@ public sealed partial class TaskbarWindow : Window
             }
             var rect = default(RECT);
             if (isWindow) GetWindowRect(_hwnd, out rect);
-            Logger.Info($"Heartbeat[{(_isPrimary ? "primary" : "secondary")}]: window={isWindow} visible={isVisible} cloaked=0x{cloaked:X} parent=0x{GetParent(_hwnd):X} taskbar=0x{_taskbar:X} rect=({rect.Left},{rect.Top},{rect.Right},{rect.Bottom})");
+            Logger.Info($"Heartbeat[{(_isPrimary ? "primary" : "secondary")}]: window={isWindow} visible={isVisible} autoHidden={_autoHidden} cloaked=0x{cloaked:X} parent=0x{GetParent(_hwnd):X} taskbar=0x{_taskbar:X} rect=({rect.Left},{rect.Top},{rect.Right},{rect.Bottom})");
         }
         catch (Exception ex)
         {
@@ -668,6 +675,11 @@ public sealed partial class TaskbarWindow : Window
 
         if (!force && _hasLastTaskbarRect)
         {
+            // Re-assert the hidden state first: a window that crept back into
+            // view would otherwise stay visible until the taskbar next resized.
+            if (_autoHidden && IsWindowVisible(_hwnd))
+                ApplyAutoHide(true, _autoHideReason);
+
             // Compare under PMv2 so the rect matches the one PositionInTaskbar
             // stored (GetWindowRect is DPI-awareness sensitive after SetParent).
             var prev = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -696,6 +708,31 @@ public sealed partial class TaskbarWindow : Window
 
     private static bool RectEquals(RECT a, RECT b) =>
         a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom;
+
+    /// <summary>
+    /// Shows or hides the indicator when the taskbar is too small to share it
+    /// with, so a phone-sized session isn't left with an unreachable Start
+    /// button. Only acts on a transition, and the window stays parented and
+    /// positioned so it reappears as soon as there is room again.
+    /// </summary>
+    private void ApplyAutoHide(bool hide, string? reason)
+    {
+        _autoHideReason = hide ? reason : null;
+
+        // Compare against the real visibility, not just our own flag: WinUI or
+        // an Explorer restart can put the window back on screen behind our back.
+        if (hide == !IsWindowVisible(_hwnd))
+        {
+            _autoHidden = hide;
+            return;
+        }
+
+        _autoHidden = hide;
+        ShowWindow(_hwnd, hide ? SW_HIDE : SW_SHOWNOACTIVATE);
+        Logger.Info(hide
+            ? $"AutoHide: hiding indicator ({reason})"
+            : "AutoHide: taskbar has room again -- showing indicator");
+    }
 
     /// <summary>
     /// Calculates and applies the correct position and size within the taskbar.
@@ -737,6 +774,16 @@ public sealed partial class TaskbarWindow : Window
         // Inset vertically so the window doesn't fill the full taskbar height.
         var taskbarDpi = GetDpiForWindow(taskbar);
         var scale = taskbarDpi / 96.0;
+
+        // On a phone-sized taskbar there simply isn't room to share: the
+        // indicator lands on top of the Start button and swallows its clicks.
+        var logicalTaskbarWidth = taskbarWidth / scale;
+        if (_settings.HideOnNarrowTaskbar && logicalTaskbarWidth < _settings.NarrowTaskbarWidth)
+        {
+            ApplyAutoHide(true, $"taskbar {logicalTaskbarWidth:0} logical px wide < {_settings.NarrowTaskbarWidth}");
+            return;
+        }
+
         var verticalInset = (int)(4 * scale);
         var windowHeight = taskbarHeight - (verticalInset * 2);
 
@@ -823,6 +870,13 @@ public sealed partial class TaskbarWindow : Window
             SWP_NOACTIVATE | SWP_FRAMECHANGED);
         var setPosErr = ok ? 0 : Marshal.GetLastPInvokeError();
         Logger.Info($"PositionInTaskbar: final SetWindowPos x={xPos} y={verticalInset} w={actualWidth} h={windowHeight} ok={ok} err={setPosErr} parent=0x{GetParent(_hwnd):X}");
+
+        // The width test above uses a fixed threshold; this one scales with the
+        // actual box. Reaching past the middle of the taskbar means the
+        // indicator plus the tray own most of it, which is where it starts
+        // covering the (centred) Start button.
+        var crowded = _settings.HideOnNarrowTaskbar && xPos < taskbarWidth / 2;
+        ApplyAutoHide(crowded, crowded ? $"indicator x={xPos} reaches past taskbar midpoint {taskbarWidth / 2}" : null);
 
         GetWindowRect(_hwnd, out var finalRect);
         Logger.Info($"PositionInTaskbar: post-position GetWindowRect=({finalRect.Left},{finalRect.Top},{finalRect.Right},{finalRect.Bottom})");

@@ -228,7 +228,8 @@ internal sealed class TaskbarManager
     {
         var result = ContextMenu.Show(x, y,
             startupChecked: StartupHelper.IsRegistered,
-            updateVersion: UpdateChecker.LatestVersion);
+            updateVersion: UpdateChecker.LatestVersion,
+            hideOnNarrowChecked: Settings.HideOnNarrowTaskbar);
         switch (result.Action)
         {
             case MenuAction.SelectColor:
@@ -243,6 +244,12 @@ internal sealed class TaskbarManager
                 break;
             case MenuAction.ToggleStartup:
                 StartupHelper.SetRegistered(!StartupHelper.IsRegistered);
+                break;
+            case MenuAction.ToggleHideOnNarrow:
+                Settings.HideOnNarrowTaskbar = !Settings.HideOnNarrowTaskbar;
+                Settings.Save();
+                Logger.Info($"HideOnNarrowTaskbar toggled to {Settings.HideOnNarrowTaskbar}");
+                Reconcile("hide-on-narrow toggle", force: true);
                 break;
             case MenuAction.ReattachToTaskbar:
                 Logger.Info("ReattachToTaskbar: user requested manual re-attach of all windows");

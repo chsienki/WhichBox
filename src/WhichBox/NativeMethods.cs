@@ -238,6 +238,10 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool IsWindowVisible(nint hWnd);
 
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool ShowWindow(nint hWnd, int nCmdShow);
+
     [LibraryImport("dwmapi.dll")]
     internal static partial int DwmGetWindowAttribute(nint hwnd, uint dwAttribute, out int pvAttribute, uint cbAttribute);
 
@@ -437,6 +441,10 @@ internal static partial class NativeMethods
     internal const uint WS_OVERLAPPED = 0x00000000;
     internal const uint SWP_NOACTIVATE = 0x0010;
     internal const uint SWP_FRAMECHANGED = 0x0020;
+
+    // ShowWindow commands
+    internal const int SW_HIDE = 0;
+    internal const int SW_SHOWNOACTIVATE = 4;
 
     // Menu constants
     internal const uint MF_STRING = 0x0000;
